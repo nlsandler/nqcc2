@@ -1,24 +1,44 @@
 open Assembly
 
 let show_operand = function
-  | Register -> "%eax"
+  | Reg AX -> "%eax"
+  | Reg R10 -> "%r10d"
   | Imm i -> Printf.sprintf "$%d" i
+  | Stack i -> Printf.sprintf "%d(%%rbp)" i
+  (* printing out pseudoregisters is only for debugging *)
+  | Pseudo name -> Printf.sprintf "%%%s" name [@coverage off]
 
 let show_label name =
   match !Settings.platform with OS_X -> "_" ^ name | Linux -> name
+
+let show_unary_instruction = function Neg -> "negl" | Not -> "notl"
 
 let emit_instruction chan = function
   | Mov (src, dst) ->
       Printf.fprintf chan "\tmovl %s, %s\n" (show_operand src)
         (show_operand dst)
-  | Ret -> Printf.fprintf chan "\tret\n"
+  | Unary (operator, dst) ->
+      Printf.fprintf chan "\t%s %s\n"
+        (show_unary_instruction operator)
+        (show_operand dst)
+  | AllocateStack i -> Printf.fprintf chan "\tsubq $%d, %%rsp\n" i
+  | Ret ->
+      Printf.fprintf chan {|
+    movq %%rbp, %%rsp
+    popq %%rbp
+    ret
+|}
 
 let emit_function chan (Function { name; instructions }) =
   let label = show_label name in
-  Printf.fprintf chan {|
-  .globl %s
+  Printf.fprintf chan
+    {|
+    .globl %s
 %s:
-|} label label;
+    pushq %%rbp
+    movq %%rsp, %%rbp
+|}
+    label label;
   List.iter (emit_instruction chan) instructions
 
 let emit_stack_note chan =

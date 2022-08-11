@@ -48,8 +48,34 @@ module Private = struct
     | T.Constant c -> Ast.Constant c
     | other -> raise_error ~expected:(Name "a constant") ~actual:other
 
-  (* <exp> ::= <int> *)
-  let parse_exp tokens = parse_int tokens
+  (* <unop> ::= "-" | "~" *)
+  let parse_unop tokens =
+    match Tok_stream.take_token tokens with
+    | T.Tilde -> Ast.Complement
+    | T.Hyphen -> Ast.Negate
+    | other -> raise_error ~expected:(Name "a unary operator") ~actual:other
+
+  (* <exp> ::= <int> | <unop> <exp> | "(" <exp> ")"
+   * See Listing 2-7 *)
+  let rec parse_exp tokens =
+    let next_token = Tok_stream.peek tokens in
+    match next_token with
+    (* constant *)
+    | T.Constant _ -> parse_int tokens
+    (* unary expression *)
+    | T.Hyphen | T.Tilde ->
+        let operator = parse_unop tokens in
+        let inner_exp = parse_exp tokens in
+        Unary (operator, inner_exp)
+    (* parenthesized expression *)
+    | T.OpenParen ->
+        (* Consumes open paren *)
+        let _ = Tok_stream.take_token tokens in
+        let e = parse_exp tokens in
+        expect T.CloseParen tokens;
+        e
+    (* errors *)
+    | t -> raise_error ~expected:(Name "an expression") ~actual:t
 
   (* <statement> ::= "return" <exp> ";"
    * See Listing 1-7 *)

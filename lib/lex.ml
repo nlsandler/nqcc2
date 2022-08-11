@@ -63,6 +63,9 @@ let token_defs =
     def {_|\{|_} (literal T.OpenBrace);
     def {_|\}|_} (literal T.CloseBrace);
     def ";" (literal T.Semicolon);
+    def "-" (literal T.Hyphen);
+    def "--" (literal T.DoubleHyphen);
+    def "~" (literal T.Tilde);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)

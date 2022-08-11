@@ -19,3 +19,7 @@ let%test "a full program" =
       Semicolon;
       CloseBrace;
     ]
+
+let%test "two hyphens" = Lex.lex "- -" = [ Hyphen; Hyphen ]
+let%test "double hyphen" = Lex.lex "a--" = [ Identifier "a"; DoubleHyphen ]
+let%test "two tildes" = Lex.lex "~~" = [ Tilde; Tilde ]

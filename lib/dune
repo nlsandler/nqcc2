@@ -8,11 +8,17 @@
   codegen
   compile
   emit
+  instruction_fixup
   lex
   parse
+  replace_pseudos
+  tacky
+  tacky_gen
+  tacky_print
   tokens
   tok_stream
   settings
+  unique_ids
   utils)
  (libraries re camlp-streams)
  (preprocess
