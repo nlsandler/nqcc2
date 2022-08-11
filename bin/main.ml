@@ -47,7 +47,10 @@ let assemble_and_link ?(cleanup = true) src =
   if cleanup then run_command "rm" [ assembly_file ]
 
 let driver target debug stage src =
-  let _ = Settings.platform := target in
+  let _ =
+    Settings.platform := target;
+    Settings.debug := debug
+  in
   let preprocessed_name = preprocess src in
   let assembly_name = compile stage preprocessed_name in
   if stage = Settings.Executable then
@@ -64,6 +67,10 @@ let stage =
     let doc = "Run the lexer and parser" in
     (Settings.Parse, Arg.info [ "parse" ] ~doc)
   in
+  let tacky =
+    let doc = "Run the lexer, parser, and tacky generator" in
+    (Settings.Tacky, Arg.info [ "tacky" ] ~doc)
+  in
   let codegen =
     let doc = "Run through code generation but stop before emitting assembly" in
     (Settings.Codegen, Arg.info [ "codegen" ] ~doc)
@@ -72,7 +79,8 @@ let stage =
     let doc = "Stop before assembling (keep .s file)" in
     (Settings.Assembly, Arg.info [ "s"; "S" ] ~doc)
   in
-  Arg.(value & vflag Settings.Executable [ lex; parse; codegen; assembly ])
+  Arg.(
+    value & vflag Settings.Executable [ lex; parse; tacky; codegen; assembly ])
 
 let target =
   let doc = "Choose target platform" in

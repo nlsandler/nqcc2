@@ -14,4 +14,7 @@ type t =
   | OpenBrace
   | CloseBrace
   | Semicolon
+  | Hyphen
+  | DoubleHyphen
+  | Tilde
 [@@deriving show]
