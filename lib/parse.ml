@@ -21,6 +21,13 @@ let raise_error ~expected ~actual =
 
 (* helper functions *)
 
+let peek tokens =
+  match Stream.peek tokens with
+  (* non-empty stream *)
+  | Some t -> t
+  (* empty stream - raise an exception, we'll catch it at top level *)
+  | None -> raise Stream.Failure
+
 let expect expected tokens =
   let actual = Stream.next tokens in
   if actual <> expected then raise_error ~expected:(Tok expected) ~actual
@@ -41,11 +48,44 @@ let parse_id tokens =
   | T.Identifier x -> x
   | other -> raise_error ~expected:(Name "an identifier") ~actual:other
 
-(* <exp> ::= <int> *)
-let parse_expression tokens =
+(* <int> ::= ? A constant token ? *)
+let parse_constant tokens =
   match Stream.next tokens with
   | T.Constant c -> Constant c
-  | other -> raise_error ~expected:(Name "an expression") ~actual:other
+  (* we only call this when we know the next token is a constant *)
+  | _ ->
+      raise (ParseError "Internal error when parsing constant") [@coverage off]
+
+(* <unop> ::= "-" | "~" *)
+let parse_unop tokens =
+  match Stream.next tokens with
+  | T.Tilde -> Complement
+  | T.Hyphen -> Negate
+  (* we only call this when we know the next token is a unop *)
+  | _ ->
+      raise (ParseError "Internal error when parsing unary operator")
+      [@coverage off]
+
+(* <exp> ::= <int> | <unop> <exp> | "(" <exp> ")" *)
+let rec parse_expression tokens =
+  let next_token = peek tokens in
+  match next_token with
+  (* constant *)
+  | T.Constant _ -> parse_constant tokens
+  (* unary expression *)
+  | T.Hyphen | T.Tilde ->
+      let operator = parse_unop tokens in
+      let inner_exp = parse_expression tokens in
+      Unary (operator, inner_exp)
+  (* parenthesized expression *)
+  | T.OpenParen ->
+      (* Stream.junk consumes open paren *)
+      let _ = Stream.junk tokens in
+      let e = parse_expression tokens in
+      let _ = expect T.CloseParen tokens in
+      e
+  (* errors *)
+  | t -> raise_error ~expected:(Name "an expression") ~actual:t
 
 (* <statement> ::= "return" <exp> ";" *)
 let parse_statement tokens =
