@@ -1,0 +1,8 @@
+(library
+ (name nqcc)
+ (modules ast assembly codegen compile emit lex parse tokens settings)
+ (libraries batteries ppx_deriving ppx_inline_test camlp-streams)
+ (preprocess
+  (pps ppx_deriving.show))
+ (instrumentation
+  (backend bisect_ppx)))

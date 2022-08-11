@@ -1,0 +1,4 @@
+(executable
+ (public_name nqcc)
+ (name main)
+ (libraries nqcc cmdliner))
