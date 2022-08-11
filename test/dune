@@ -1,0 +1,6 @@
+(library
+ (name test)
+ (inline_tests)
+ (libraries nqcc)
+ (preprocess
+  (pps ppx_inline_test)))
