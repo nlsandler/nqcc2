@@ -19,6 +19,9 @@ let rec lex_helper chars =
   | '(' :: rest -> OpenParen :: lex_helper rest
   | ')' :: rest -> CloseParen :: lex_helper rest
   | ';' :: rest -> Semicolon :: lex_helper rest
+  | '-' :: '-' :: rest -> DoubleHyphen :: lex_helper rest
+  | '-' :: rest -> Hyphen :: lex_helper rest
+  | '~' :: rest -> Tilde :: lex_helper rest
   | c :: rest when Char.is_whitespace c -> lex_helper rest
   | c :: _ when Char.is_digit c -> lex_constant chars
   | _ -> lex_identifier chars

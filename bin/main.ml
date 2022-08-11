@@ -61,12 +61,16 @@ let stage =
     let doc = "Run the lexer and parser" in
     (Settings.Parse, Arg.info [ "parse" ] ~doc)
   in
+  let tacky =
+    let doc = "Run the lexer, parser, and tacky generator" in
+    (Settings.Tacky, Arg.info [ "tacky" ] ~doc)
+  in
   let codegen =
     let doc = "Run through code generation but stop before emitting assembly" in
     (Settings.Codegen, Arg.info [ "codegen" ] ~doc)
   in
 
-  Arg.(value & vflag Settings.Executable [ lex; parse; codegen ])
+  Arg.(value & vflag Settings.Executable [ lex; parse; tacky; codegen ])
 
 let target =
   let doc = "Choose target platform" in
