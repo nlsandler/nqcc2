@@ -35,6 +35,7 @@ let rec lex_helper chars =
     | '<' :: _ -> LessThan :: lex_helper (drop_first chars)
     | '>' :: _ -> GreaterThan :: lex_helper (drop_first chars)
     | '!' :: _ -> Bang :: lex_helper (drop_first chars)
+    | '=' :: _ -> EqualSign :: lex_helper (drop_first chars)
     | '{' :: _ -> OpenBrace :: lex_helper (drop_first chars)
     | '}' :: _ -> CloseBrace :: lex_helper (drop_first chars)
     | '(' :: _ -> OpenParen :: lex_helper (drop_first chars)

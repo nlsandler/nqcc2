@@ -12,12 +12,14 @@
   lex
   parse
   replace_pseudos
+  string_map
   tacky
   tacky_gen
   tacky_print
   tokens
   settings
-  unique_ids)
+  unique_ids
+  var_resolution)
  (libraries ppx_deriving ppx_inline_test str camlp-streams)
  (preprocess
   (pps ppx_deriving.show))

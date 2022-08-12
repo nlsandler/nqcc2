@@ -12,3 +12,5 @@ let make_label prefix =
   let n = !counter in
   counter := n + 1;
   prefix ^ "." ^ Int.to_string n
+
+let make_named_temporary = make_label

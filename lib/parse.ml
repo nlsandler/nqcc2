@@ -48,6 +48,7 @@ let get_precedence = function
   | T.(DoubleEqual | NotEqual) -> Some 30
   | T.LogicalAnd -> Some 10
   | T.LogicalOr -> Some 5
+  | T.EqualSign -> Some 1
   | _ -> None
 
 (* parsing grammar symbols *)
@@ -97,12 +98,14 @@ let parse_binop tokens =
       raise (ParseError "Internal error when parsing binary operator")
       [@coverage off]
 
-(* <factor> ::= <int> | <unop> <factor> | "(" <exp> ")" *)
+(* <factor> ::= <int> | <identifier> <unop> <factor> | "(" <exp> ")" *)
 let rec parse_factor tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
   | T.Constant _ -> parse_constant tokens
+  (* identifier *)
+  | T.Identifier _ -> Var (parse_id tokens)
   (* unary expression *)
   | T.Hyphen | T.Tilde | T.Bang ->
       let operator = parse_unop tokens in
@@ -125,22 +128,66 @@ and parse_expression min_prec tokens =
   let rec parse_exp_loop left next =
     match get_precedence next with
     | Some prec when prec >= min_prec ->
-        let operator = parse_binop tokens in
-        let right = parse_expression (prec + 1) tokens in
-        let left = Binary (operator, left, right) in
-        parse_exp_loop left (peek tokens)
+        if next = T.EqualSign then
+          let _ = Stream.junk tokens in
+          let right = parse_expression prec tokens in
+          let left = Assignment (left, right) in
+          parse_exp_loop left (peek tokens)
+        else
+          let operator = parse_binop tokens in
+          let right = parse_expression (prec + 1) tokens in
+          let left = Binary (operator, left, right) in
+          parse_exp_loop left (peek tokens)
     | _ -> left
   in
   parse_exp_loop initial_factor next_token
 
-(* <statement> ::= "return" <exp> ";" *)
-let parse_statement tokens =
-  let _ = expect T.KWReturn tokens in
-  let exp = parse_expression 0 tokens in
-  let _ = expect T.Semicolon tokens in
-  Return exp
+(* <declaration> ::= "int" <identifier> [ "=" <exp> ] ";" *)
+let parse_declaration tokens =
+  let _ = expect T.KWInt tokens in
+  let var_name = parse_id tokens in
+  match Stream.next tokens with
+  | T.Semicolon -> Declaration { name = var_name; init = None }
+  | T.EqualSign ->
+      let init = parse_expression 0 tokens in
+      expect T.Semicolon tokens;
+      Declaration { name = var_name; init = Some init }
+  | other ->
+      raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
-(* <function> ::= "int" <identifier> "(" ")" "{" <statement> "}" *)
+(* <statement> ::= "return" <exp> ";" | <exp> ";" | ";" *)
+let parse_statement tokens =
+  match peek tokens with
+  | T.KWReturn ->
+      (* consume return keyword *)
+      let _ = Stream.junk tokens in
+      let exp = parse_expression 0 tokens in
+      let _ = expect T.Semicolon tokens in
+      Return exp
+  | T.Semicolon ->
+      (* consume semicolon *)
+      let _ = Stream.junk tokens in
+      Null
+  | _ ->
+      let exp = parse_expression 0 tokens in
+      expect T.Semicolon tokens;
+      Expression exp
+
+(* <block-item> ::= <statement> | <declaration> *)
+let parse_block_item tokens =
+  match peek tokens with
+  | T.KWInt -> D (parse_declaration tokens)
+  | _ -> S (parse_statement tokens)
+
+(* helper function to parse list of block items, stopping when we hit a close brace *)
+let rec parse_block_item_list tokens =
+  match peek tokens with
+  | T.CloseBrace -> []
+  | _ ->
+      let next_block_item = parse_block_item tokens in
+      next_block_item :: parse_block_item_list tokens
+
+(* <function> ::= "int" <identifier> "(" ")" "{" { <block-item> } "}" *)
 let parse_function_definition tokens =
   let _ = expect KWInt tokens in
   let fun_name = parse_id tokens in
@@ -150,9 +197,9 @@ let parse_function_definition tokens =
     expect T.CloseParen tokens;
     expect T.OpenBrace tokens
   in
-  let statement = parse_statement tokens in
+  let body = parse_block_item_list tokens in
   let _ = expect T.CloseBrace tokens in
-  Function { name = fun_name; body = statement }
+  Function { name = fun_name; body }
 
 (* <program> ::= <function> *)
 let parse tokens =
