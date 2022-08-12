@@ -159,6 +159,16 @@ and parse_expression min_prec tokens =
   in
   parse_exp_loop initial_factor next_token
 
+(* parse an optional expression followed by a delimiter *)
+let parse_optional_expression delim tokens =
+  if peek tokens = delim then (
+    Stream.junk tokens;
+    None)
+  else
+    let e = parse_expression 0 tokens in
+    expect delim tokens;
+    Some e
+
 (* <declaration> ::= "int" <identifier> [ "=" <exp> ] ";" *)
 let parse_declaration tokens =
   let _ = expect T.KWInt tokens in
@@ -172,32 +182,51 @@ let parse_declaration tokens =
   | other ->
       raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
+(* <for-init> ::= <declaration> | [ <exp> ] ";" *)
+let parse_for_init tokens =
+  match peek tokens with
+  | T.KWInt -> InitDecl (parse_declaration tokens)
+  | _ ->
+      let opt_e = parse_optional_expression T.Semicolon tokens in
+      InitExp opt_e
+
 (* <statement> ::= "return" <exp> ";"
                  | <exp> ";"
                  | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
                  | <block>
+                 | "break" ";"
+                 | "continue" ";"
+                 | "while" "(" <exp> ")" <statement>
+                 | "do" <statement> "while" "(" <exp> ")" ";"
+                 | "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement>
                  | ";"
 *)
 let rec parse_statement tokens =
   match peek tokens with
   | T.KWIf -> parse_if_statement tokens
   | T.OpenBrace -> Compound (parse_block tokens)
+  | T.KWDo -> parse_do_loop tokens
+  | T.KWWhile -> parse_while_loop tokens
+  | T.KWFor -> parse_for_loop tokens
+  | T.KWBreak ->
+      Stream.junk tokens;
+      expect T.Semicolon tokens;
+      Break ""
+  | T.KWContinue ->
+      Stream.junk tokens;
+      expect T.Semicolon tokens;
+      Continue ""
   | T.KWReturn ->
       (* consume return keyword *)
       let _ = Stream.junk tokens in
       let exp = parse_expression 0 tokens in
       let _ = expect T.Semicolon tokens in
       Return exp
-  | T.Semicolon ->
-      (* consume semicolon *)
-      let _ = Stream.junk tokens in
-      Null
-  | _ ->
-      let exp = parse_expression 0 tokens in
-      expect T.Semicolon tokens;
-      Expression exp
+  | _ -> (
+      let opt_exp = parse_optional_expression T.Semicolon tokens in
+      match opt_exp with Some exp -> Expression exp | None -> Null)
 
-(* helper functions to parse individual statements *)
+(* "if" "(" <exp> ")" <statement> [ "else" <statement> ] *)
 and parse_if_statement tokens =
   let _ = expect KWIf tokens in
   let _ = expect OpenParen tokens in
@@ -213,6 +242,36 @@ and parse_if_statement tokens =
     | _ -> None
   in
   If { condition; then_clause; else_clause }
+
+(* "do" <statement> "while" "(" <exp> ")" ";" *)
+and parse_do_loop tokens =
+  expect KWDo tokens;
+  let body = parse_statement tokens in
+  expect KWWhile tokens;
+  expect OpenParen tokens;
+  let condition = parse_expression 0 tokens in
+  expect CloseParen tokens;
+  expect Semicolon tokens;
+  DoWhile { body; condition; id = "" }
+
+(* "while" "(" <exp> ")" <statement> *)
+and parse_while_loop tokens =
+  expect KWWhile tokens;
+  expect OpenParen tokens;
+  let condition = parse_expression 0 tokens in
+  expect CloseParen tokens;
+  let body = parse_statement tokens in
+  While { condition; body; id = "" }
+
+(* "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement> *)
+and parse_for_loop tokens =
+  expect KWFor tokens;
+  expect OpenParen tokens;
+  let init = parse_for_init tokens in
+  let condition = parse_optional_expression T.Semicolon tokens in
+  let post = parse_optional_expression T.CloseParen tokens in
+  let body = parse_statement tokens in
+  For { init; condition; post; body; id = "" }
 
 (* <block-item> ::= <statement> | <declaration> *)
 and parse_block_item tokens =
