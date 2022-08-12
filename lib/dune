@@ -17,7 +17,8 @@
   tacky_print
   tokens
   settings
-  unique_ids)
+  unique_ids
+  var_resolution)
  (libraries batteries ppx_deriving ppx_inline_test camlp-streams)
  (preprocess
   (pps ppx_deriving.show))

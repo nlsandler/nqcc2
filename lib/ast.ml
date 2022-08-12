@@ -1,3 +1,5 @@
+[@@@coverage exclude_file]
+
 type unary_operator = Complement | Negate | Not [@@deriving show]
 
 type binary_operator =
@@ -23,13 +25,20 @@ type binary_operator =
 
 type exp =
   | Constant of int
+  | Var of string
   | Unary of unary_operator * exp
   | Binary of binary_operator * exp * exp
+  | Assignment of exp * exp
 [@@deriving show]
 
-type statement = Return of exp [@@deriving show]
+type declaration = Declaration of { name : string; init : exp option }
+[@@deriving show]
 
-type function_definition = Function of { name : string; body : statement }
+type statement = Return of exp | Expression of exp | Null [@@deriving show]
+type block_item = S of statement | D of declaration [@@deriving show]
+
+type function_definition =
+  | Function of { name : string; body : block_item list }
 [@@deriving show]
 
 type t = Program of function_definition [@@deriving show]

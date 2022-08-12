@@ -35,4 +35,5 @@ type t =
   | GreaterThan
   | LessOrEqual
   | GreaterOrEqual
+  | EqualSign (* = *)
 [@@deriving show]
