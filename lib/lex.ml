@@ -1,6 +1,13 @@
 open Batteries
 open Tokens
 
+(* reject disabled extra-credit features (some here, some in parser)*)
+let check_extra_credit = function
+  | (Ampersand | Pipe | Caret | DoubleLeftBracket | DoubleRightBracket)
+    when not (List.mem Settings.Bitwise !Settings.extra_credit_flags) ->
+      failwith "Unsupported extra-credit feature"
+  | _ -> ()
+
 (* regular expressions for tokens *)
 let id_regexp = Str.regexp {|[A-Za-z_][A-Za-z0-9_]*\b|}
 let const_regexp = Str.regexp {|[0-9]+\b|}
@@ -22,6 +29,15 @@ let rec lex_helper chars =
   | '-' :: '-' :: rest -> DoubleHyphen :: lex_helper rest
   | '-' :: rest -> Hyphen :: lex_helper rest
   | '~' :: rest -> Tilde :: lex_helper rest
+  | '+' :: rest -> Plus :: lex_helper rest
+  | '*' :: rest -> Star :: lex_helper rest
+  | '/' :: rest -> Slash :: lex_helper rest
+  | '%' :: rest -> Percent :: lex_helper rest
+  | '&' :: rest -> Ampersand :: lex_helper rest
+  | '^' :: rest -> Caret :: lex_helper rest
+  | '|' :: rest -> Pipe :: lex_helper rest
+  | '<' :: '<' :: rest -> DoubleLeftBracket :: lex_helper rest
+  | '>' :: '>' :: rest -> DoubleRightBracket :: lex_helper rest
   | c :: rest when Char.is_whitespace c -> lex_helper rest
   | c :: _ when Char.is_digit c -> lex_constant chars
   | _ -> lex_identifier chars
@@ -51,4 +67,6 @@ and lex_identifier input_chars =
 
 let lex input =
   let input = String.trim input in
-  lex_helper (String.explode input)
+  let toks = lex_helper (String.explode input) in
+  List.iter check_extra_credit toks;
+  toks

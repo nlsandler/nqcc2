@@ -17,4 +17,13 @@ type t =
   | Hyphen
   | DoubleHyphen
   | Tilde
+  | Plus
+  | Star
+  | Slash
+  | Percent
+  | Ampersand
+  | Caret
+  | Pipe
+  | DoubleLeftBracket
+  | DoubleRightBracket
 [@@deriving show]

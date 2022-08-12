@@ -10,7 +10,7 @@ homepage: "https://github.com/nlsandler/nqcc2"
 bug-reports: "https://github.com/nlsandler/nqcc2/issues"
 depends: [
   "ocaml"
-  "dune" {>= "3.0"}
+  "dune" {>= "2.9"}
   "batteries"
   "bisect_ppx"
   "ppx_deriving"
@@ -28,9 +28,11 @@ build: [
     name
     "-j"
     jobs
+    "--promote-install-files=false"
     "@install"
     "@runtest" {with-test}
     "@doc" {with-doc}
   ]
+  ["dune" "install" "-p" name "--create-install-files" name]
 ]
 dev-repo: "git+https://github.com/nlsandler/nqcc2.git"

@@ -47,10 +47,11 @@ let assemble_and_link ?(cleanup = true) src =
     let cleanup_cmd = Printf.sprintf "rm %s" assembly_file in
     run_command cleanup_cmd
 
-let driver target debug stage src =
+let driver target debug extra_credit stage src =
   let _ =
     Settings.platform := target;
-    Settings.debug := debug
+    Settings.debug := debug;
+    Settings.extra_credit_flags := extra_credit
   in
   let preprocessed_name = preprocess src in
   let assembly_name = compile stage preprocessed_name in
@@ -88,6 +89,13 @@ let target =
   let target = Arg.enum [ ("linux", Settings.Linux); ("osx", Settings.OS_X) ] in
   Arg.(value & opt target current_platform & info [ "t"; "target" ] ~doc)
 
+let extra_credit =
+  let bitwise =
+    let doc = "Enable bitwise operations (&, |, ^, <<, >>)" in
+    (Settings.Bitwise, Arg.info [ "bitwise" ] ~doc)
+  in
+  Arg.(value & vflag_all [] [ bitwise ])
+
 let debug =
   let doc =
     "Write out pre- and post-register-allocation assembly and DOT files of \
@@ -101,7 +109,8 @@ let src_file =
 let cmd =
   let doc = "A not-quite-C compiler" in
   let info = Cmd.info "nqcc" ~doc in
-  Cmd.v info Term.(const driver $ target $ debug $ stage $ src_file)
+  Cmd.v info
+    Term.(const driver $ target $ debug $ extra_credit $ stage $ src_file)
 
 let main () = exit (Cmd.eval cmd)
 let () = main ()

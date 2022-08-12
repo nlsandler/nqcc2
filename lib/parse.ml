@@ -40,6 +40,16 @@ let expect_empty tokens =
     let bad_token = Stream.next tokens in
     raise_error ~expected:(Name "end of file") ~actual:bad_token
 
+(* return Some prec if token represents a binary operator, None otherwise*)
+let get_precedence = function
+  | T.Star | T.Slash | T.Percent -> Some 50
+  | T.Plus | T.Hyphen -> Some 45
+  | T.DoubleLeftBracket | T.DoubleRightBracket -> Some 40
+  | T.Ampersand -> Some 25
+  | T.Caret -> Some 20
+  | T.Pipe -> Some 15
+  | _ -> None
+
 (* parsing grammar symbols *)
 
 (* <identifier> ::= ? An identifier token ? *)
@@ -66,8 +76,25 @@ let parse_unop tokens =
       raise (ParseError "Internal error when parsing unary operator")
       [@coverage off]
 
-(* <exp> ::= <int> | <unop> <exp> | "(" <exp> ")" *)
-let rec parse_expression tokens =
+(* <binop> ::= "-" | "+" | "*" | "/" | "%" *)
+let parse_binop tokens =
+  match Stream.next tokens with
+  | T.Plus -> Add
+  | T.Hyphen -> Subtract
+  | T.Star -> Multiply
+  | T.Slash -> Divide
+  | T.Percent -> Mod
+  | T.Ampersand -> BitwiseAnd
+  | T.Caret -> BitwiseXor
+  | T.Pipe -> BitwiseOr
+  | T.DoubleLeftBracket -> BitshiftLeft
+  | T.DoubleRightBracket -> BitshiftRight
+  | _ ->
+      raise (ParseError "Internal error when parsing binary operator")
+      [@coverage off]
+
+(* <factor> ::= <int> | <unop> <factor> | "(" <exp> ")" *)
+let rec parse_factor tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
@@ -75,22 +102,37 @@ let rec parse_expression tokens =
   (* unary expression *)
   | T.Hyphen | T.Tilde ->
       let operator = parse_unop tokens in
-      let inner_exp = parse_expression tokens in
+      let inner_exp = parse_factor tokens in
       Unary (operator, inner_exp)
   (* parenthesized expression *)
   | T.OpenParen ->
       (* Stream.junk consumes open paren *)
       let _ = Stream.junk tokens in
-      let e = parse_expression tokens in
+      let e = parse_expression 0 tokens in
       let _ = expect T.CloseParen tokens in
       e
   (* errors *)
-  | t -> raise_error ~expected:(Name "an expression") ~actual:t
+  | t -> raise_error ~expected:(Name "a factor") ~actual:t
+
+(* <exp> ::= <factor> | <exp> <binop> <exp> *)
+and parse_expression min_prec tokens =
+  let initial_factor = parse_factor tokens in
+  let next_token = peek tokens in
+  let rec parse_exp_loop left next =
+    match get_precedence next with
+    | Some prec when prec >= min_prec ->
+        let operator = parse_binop tokens in
+        let right = parse_expression (prec + 1) tokens in
+        let left = Binary (operator, left, right) in
+        parse_exp_loop left (peek tokens)
+    | _ -> left
+  in
+  parse_exp_loop initial_factor next_token
 
 (* <statement> ::= "return" <exp> ";" *)
 let parse_statement tokens =
   let _ = expect T.KWReturn tokens in
-  let exp = parse_expression tokens in
+  let exp = parse_expression 0 tokens in
   let _ = expect T.Semicolon tokens in
   Return exp
 
