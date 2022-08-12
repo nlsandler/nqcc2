@@ -1,8 +1,19 @@
 [@@@coverage exclude_file]
 
-type unary_operator = Complement | Negate [@@deriving show]
+type unary_operator = Complement | Negate | Not [@@deriving show]
 
-type binary_operator = Add | Subtract | Multiply | Divide | Mod
+type binary_operator =
+  | Add
+  | Subtract
+  | Multiply
+  | Divide
+  | Mod
+  | Equal
+  | NotEqual
+  | LessThan
+  | LessOrEqual
+  | GreaterThan
+  | GreaterOrEqual
 [@@deriving show]
 
 type tacky_val = Constant of int | Var of string [@@deriving show]
@@ -16,6 +27,11 @@ type instruction =
       src2 : tacky_val;
       dst : tacky_val;
     }
+  | Copy of { src : tacky_val; dst : tacky_val }
+  | Jump of string
+  | JumpIfZero of tacky_val * string
+  | JumpIfNotZero of tacky_val * string
+  | Label of string
 [@@deriving show]
 
 type function_definition =

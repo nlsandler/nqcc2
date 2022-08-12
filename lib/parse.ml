@@ -44,6 +44,10 @@ let expect_empty tokens =
 let get_precedence = function
   | T.Star | T.Slash | T.Percent -> Some 50
   | T.Plus | T.Hyphen -> Some 45
+  | T.(LessThan | LessOrEqual | GreaterThan | GreaterOrEqual) -> Some 35
+  | T.(DoubleEqual | NotEqual) -> Some 30
+  | T.LogicalAnd -> Some 10
+  | T.LogicalOr -> Some 5
   | _ -> None
 
 (* parsing grammar symbols *)
@@ -67,6 +71,7 @@ let parse_unop tokens =
   match Stream.next tokens with
   | T.Tilde -> Complement
   | T.Hyphen -> Negate
+  | T.Bang -> Not
   (* we only call this when we know the next token is a unop *)
   | _ ->
       raise (ParseError "Internal error when parsing unary operator")
@@ -80,6 +85,14 @@ let parse_binop tokens =
   | T.Star -> Multiply
   | T.Slash -> Divide
   | T.Percent -> Mod
+  | T.LogicalAnd -> And
+  | T.LogicalOr -> Or
+  | T.DoubleEqual -> Equal
+  | T.NotEqual -> NotEqual
+  | T.LessThan -> LessThan
+  | T.LessOrEqual -> LessOrEqual
+  | T.GreaterThan -> GreaterThan
+  | T.GreaterOrEqual -> GreaterOrEqual
   | _ ->
       raise (ParseError "Internal error when parsing binary operator")
       [@coverage off]
@@ -91,7 +104,7 @@ let rec parse_factor tokens =
   (* constant *)
   | T.Constant _ -> parse_constant tokens
   (* unary expression *)
-  | T.Hyphen | T.Tilde ->
+  | T.Hyphen | T.Tilde | T.Bang ->
       let operator = parse_unop tokens in
       let inner_exp = parse_factor tokens in
       Unary (operator, inner_exp)
