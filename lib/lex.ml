@@ -35,6 +35,11 @@ let convert_identifier = function
   | "void" -> T.KWVoid
   | "if" -> T.KWIf
   | "else" -> T.KWElse
+  | "do" -> T.KWDo
+  | "while" -> T.KWWhile
+  | "for" -> T.KWFor
+  | "break" -> T.KWBreak
+  | "continue" -> T.KWContinue
   | other -> T.Identifier other
 
 let convert_int s = T.Constant (int_of_string s)

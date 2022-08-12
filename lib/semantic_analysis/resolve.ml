@@ -41,6 +41,8 @@ let rec resolve_exp var_map = function
   (* Nothing to do for constant *)
   | Constant _ as c -> c
 
+let resolve_optional_exp var_map = Option.map (resolve_exp var_map)
+
 let resolve_declaration var_map (Declaration { name; init }) =
   match StringMap.find_opt name var_map with
   | Some { from_current_block = true; _ } ->
@@ -58,6 +60,12 @@ let resolve_declaration var_map (Declaration { name; init }) =
       (* return new map and resolved declaration *)
       (new_map, Declaration { name = unique_name; init = resolved_init })
 
+let resolve_for_init var_map = function
+  | InitExp e -> (var_map, InitExp (resolve_optional_exp var_map e))
+  | InitDecl d ->
+      let new_map, resolved_decl = resolve_declaration var_map d in
+      (new_map, InitDecl resolved_decl)
+
 let rec resolve_statement var_map = function
   | Return e -> Return (resolve_exp var_map e)
   | Expression e -> Expression (resolve_exp var_map e)
@@ -68,10 +76,35 @@ let rec resolve_statement var_map = function
           then_clause = resolve_statement var_map then_clause;
           else_clause = Option.map (resolve_statement var_map) else_clause;
         }
+  | While { condition; body; id } ->
+      While
+        {
+          condition = resolve_exp var_map condition;
+          body = resolve_statement var_map body;
+          id;
+        }
+  | DoWhile { body; condition; id } ->
+      DoWhile
+        {
+          body = resolve_statement var_map body;
+          condition = resolve_exp var_map condition;
+          id;
+        }
+  | For { init; condition; post; body; id } ->
+      let var_map1 = copy_variable_map var_map in
+      let var_map2, resolved_init = resolve_for_init var_map1 init in
+      For
+        {
+          init = resolved_init;
+          condition = resolve_optional_exp var_map2 condition;
+          post = resolve_optional_exp var_map2 post;
+          body = resolve_statement var_map2 body;
+          id;
+        }
   | Compound block ->
       let new_variable_map = copy_variable_map var_map in
       Compound (resolve_block new_variable_map block)
-  | Null -> Null
+  | (Null | Break _ | Continue _) as s -> s
 
 and resolve_block_item var_map = function
   | S s ->

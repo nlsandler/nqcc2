@@ -151,6 +151,16 @@ module Private = struct
     in
     parse_exp_loop initial_factor next_token
 
+  (* parse an optional expression followed by a delimiter *)
+  let parse_optional_exp delim tokens =
+    if Tok_stream.peek tokens = delim then
+      let _ = Tok_stream.take_token tokens in
+      None
+    else
+      let e = parse_exp 0 tokens in
+      expect delim tokens;
+      Some e
+
   (*** Declarations ***)
 
   (* <declaration> ::= "int" <identifier> [ "=" <exp> ] ";" *)
@@ -175,9 +185,22 @@ module Private = struct
 
   (*** Statements and blocks ***)
 
+  (* <for-init> ::= <declaration> | [ <exp> ] ";" *)
+  let parse_for_init tokens =
+    if Tok_stream.peek tokens = T.KWInt then
+      Ast.InitDecl (parse_declaration tokens)
+    else
+      let opt_e = parse_optional_exp T.Semicolon tokens in
+      Ast.InitExp opt_e
+
   (* <statement> ::= "return" <exp> ";"
    *               | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
    *               | <block>
+   *               | "break" ";"
+   *               | "continue" ";"
+   *               | "while" "(" <exp> ")" <statement>
+   *               | "do" <statement> "while" "(" <exp> ")" ";"
+   *               | "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement>
    *               | <exp> ";"
    *               | ";"
    *)
@@ -190,12 +213,7 @@ module Private = struct
         let exp = parse_exp 0 tokens in
         expect T.Semicolon tokens;
         Ast.Return exp
-    (* ";" *)
-    | T.Semicolon ->
-        (* consume semicolon *)
-        let _ = Tok_stream.take_token tokens in
-        Ast.Null
-        (* "if" "(" <exp> ")" <statement> [ "else" <statement> ] *)
+    (* "if" "(" <exp> ")" <statement> [ "else" <statement> ] *)
     | T.KWIf ->
         (* if statement - consume if keyword *)
         let _ = Tok_stream.take_token tokens in
@@ -214,11 +232,50 @@ module Private = struct
         in
         Ast.If { condition; then_clause; else_clause }
     | T.OpenBrace -> Ast.Compound (parse_block tokens)
-    (* <exp> ";" *)
-    | _ ->
-        let exp = parse_exp 0 tokens in
+    (* "break" *)
+    | T.KWBreak ->
+        (* consume break keyword *)
+        let _ = Tok_stream.take_token tokens in
         expect T.Semicolon tokens;
-        Ast.Expression exp
+        Ast.Break ""
+    (* "continue" *)
+    | T.KWContinue ->
+        (* consume continue keyword *)
+        let _ = Tok_stream.take_token tokens in
+        expect T.Semicolon tokens;
+        Ast.Continue ""
+    (* "while" "(" <exp> ")" <statement> *)
+    | T.KWWhile ->
+        (* consume while keyword *)
+        let _ = Tok_stream.take_token tokens in
+        expect OpenParen tokens;
+        let condition = parse_exp 0 tokens in
+        expect CloseParen tokens;
+        let body = parse_statement tokens in
+        Ast.While { condition; body; id = "" }
+    (* "do" <statement> "while" "(" <exp> ")" ";" *)
+    | T.KWDo ->
+        expect KWDo tokens;
+        let body = parse_statement tokens in
+        expect KWWhile tokens;
+        expect OpenParen tokens;
+        let condition = parse_exp 0 tokens in
+        expect CloseParen tokens;
+        expect Semicolon tokens;
+        Ast.DoWhile { body; condition; id = "" }
+    (* "for" "(" <for-init> [ <exp> ] ";" [ <exp> ] ")" <statement> *)
+    | T.KWFor ->
+        expect KWFor tokens;
+        expect OpenParen tokens;
+        let init = parse_for_init tokens in
+        let condition = parse_optional_exp T.Semicolon tokens in
+        let post = parse_optional_exp T.CloseParen tokens in
+        let body = parse_statement tokens in
+        Ast.For { init; condition; post; body; id = "" }
+    (* <exp> ";" | ";" *)
+    | _ -> (
+        let opt_exp = parse_optional_exp T.Semicolon tokens in
+        match opt_exp with Some e -> Ast.Expression e | None -> Ast.Null)
 
   (* <block-item> ::= <statement> | <declaration> *)
   and parse_block_item tokens =
