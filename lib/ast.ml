@@ -38,13 +38,14 @@ type statement =
       then_clause : statement;
       else_clause : statement option;
     }
+  | Compound of block
   | Null
 [@@deriving show]
 
-type block_item = S of statement | D of declaration [@@deriving show]
+and block_item = S of statement | D of declaration [@@deriving show]
+and block = Block of block_item list
 
-type function_definition =
-  | Function of { name : string; body : block_item list }
+type function_definition = Function of { name : string; body : block }
 [@@deriving show]
 
 type t = Program of function_definition [@@deriving show]

@@ -175,11 +175,13 @@ let parse_declaration tokens =
 (* <statement> ::= "return" <exp> ";"
                  | <exp> ";"
                  | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+                 | <block>
                  | ";"
 *)
 let rec parse_statement tokens =
   match peek tokens with
   | T.KWIf -> parse_if_statement tokens
+  | T.OpenBrace -> Compound (parse_block tokens)
   | T.KWReturn ->
       (* consume return keyword *)
       let _ = Stream.junk tokens in
@@ -213,31 +215,36 @@ and parse_if_statement tokens =
   If { condition; then_clause; else_clause }
 
 (* <block-item> ::= <statement> | <declaration> *)
-let parse_block_item tokens =
+and parse_block_item tokens =
   match peek tokens with
   | T.KWInt -> D (parse_declaration tokens)
   | _ -> S (parse_statement tokens)
 
 (* helper function to parse list of block items, stopping when we hit a close brace *)
-let rec parse_block_item_list tokens =
+and parse_block_item_list tokens =
   match peek tokens with
   | T.CloseBrace -> []
   | _ ->
       let next_block_item = parse_block_item tokens in
       next_block_item :: parse_block_item_list tokens
 
-(* <function> ::= "int" <identifier> "(" ")" "{" { <block-item> } "}" *)
+(* <block> ::= "{" { <block-item> } "}" *)
+and parse_block tokens =
+  expect T.OpenBrace tokens;
+  let block_items = parse_block_item_list tokens in
+  expect T.CloseBrace tokens;
+  Block block_items
+
+(* <function> ::= "int" <identifier> "(" ")" <block> *)
 let parse_function_definition tokens =
   let _ = expect KWInt tokens in
   let fun_name = parse_id tokens in
   let _ =
     expect T.OpenParen tokens;
     expect T.KWVoid tokens;
-    expect T.CloseParen tokens;
-    expect T.OpenBrace tokens
+    expect T.CloseParen tokens
   in
-  let body = parse_block_item_list tokens in
-  let _ = expect T.CloseBrace tokens in
+  let body = parse_block tokens in
   Function { name = fun_name; body }
 
 (* <program> ::= <function> *)
