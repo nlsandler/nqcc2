@@ -39,6 +39,8 @@ let rec emit_tacky_for_exp = function
       in
       (instructions, Var v)
   | Ast.Assignment _ -> failwith "Internal error: bad lvalue" [@coverage off]
+  | Ast.Conditional { condition; then_result; else_result } ->
+      emit_conditional_expression condition then_result else_result
 
 (* helper functions for individual expression *)
 and emit_unary_expression op inner =
@@ -104,7 +106,26 @@ and emit_or_expression e1 e2 =
   in
   (instructions, dst)
 
-let emit_tacky_for_statement = function
+and emit_conditional_expression condition e1 e2 =
+  let eval_cond, c = emit_tacky_for_exp condition in
+  let eval_v1, v1 = emit_tacky_for_exp e1 in
+  let eval_v2, v2 = emit_tacky_for_exp e2 in
+  let e2_label = Unique_ids.make_label "conditional_else" in
+  let end_label = Unique_ids.make_label "conditional_end" in
+  let dst_name = Unique_ids.make_temporary () in
+  let dst = Tacky.Var dst_name in
+  let instructions =
+    eval_cond
+    @ (T.JumpIfZero (c, e2_label) :: eval_v1)
+    @ T.Copy { src = v1; dst }
+      :: T.Jump end_label
+      :: T.Label e2_label
+      :: eval_v2
+    @ (T.Copy { src = v2; dst } :: [ T.Label end_label ])
+  in
+  (instructions, dst)
+
+let rec emit_tacky_for_statement = function
   | Ast.Return e ->
       let eval_exp, v = emit_tacky_for_exp e in
       eval_exp @ [ T.Return v ]
@@ -112,18 +133,39 @@ let emit_tacky_for_statement = function
       (* evaluate expression but don't use result *)
       let eval_exp, _exp_result = emit_tacky_for_exp e in
       eval_exp
+  | Ast.If { condition; then_clause; else_clause } ->
+      emit_tacky_for_if_statement condition then_clause else_clause
   | Ast.Null -> []
 
-let emit_tacky_for_block_item = function
+and emit_tacky_for_block_item = function
   | Ast.S s -> emit_tacky_for_statement s
   | Ast.D (Declaration { name; init = Some e }) ->
       (* treat declaration with initializer like an assignment expression *)
-      let eval_assignment, _assing_result =
+      let eval_assignment, _assign_result =
         emit_tacky_for_exp (Ast.Assignment (Var name, e))
       in
       eval_assignment
   | Ast.D (Declaration { init = None; _ }) ->
       (* don't generate instructions for declaration without initializer *) []
+
+and emit_tacky_for_if_statement condition then_clause = function
+  | None ->
+      (* no else clause *)
+      let end_label = Unique_ids.make_label "if_end" in
+      let eval_condition, c = emit_tacky_for_exp condition in
+      eval_condition
+      @ (T.JumpIfZero (c, end_label) :: emit_tacky_for_statement then_clause)
+      @ [ T.Label end_label ]
+  | Some else_clause ->
+      let else_label = Unique_ids.make_label "else" in
+      let end_label = Unique_ids.make_label "" in
+      let eval_condition, c = emit_tacky_for_exp condition in
+      eval_condition
+      @ (T.JumpIfZero (c, else_label) :: emit_tacky_for_statement then_clause)
+      @ T.Jump end_label
+        :: T.Label else_label
+        :: emit_tacky_for_statement else_clause
+      @ [ T.Label end_label ]
 
 let emit_tacky_for_function (Ast.Function { name; body }) =
   (* Use the tacky_instructions queue to accumulate instructions as we go *)

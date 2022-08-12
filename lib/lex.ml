@@ -8,6 +8,8 @@ let id_to_tok = function
   | "int" -> KWInt
   | "return" -> KWReturn
   | "void" -> KWVoid
+  | "if" -> KWIf
+  | "else" -> KWElse
   | other -> Identifier other
 
 (* whitespace characters: space, tab, newline, vertical tab, form feed *)
@@ -48,6 +50,8 @@ let rec lex_helper chars =
     | '*' :: _ -> Star :: lex_helper (drop_first chars)
     | '/' :: _ -> Slash :: lex_helper (drop_first chars)
     | '%' :: _ -> Percent :: lex_helper (drop_first chars)
+    | '?' :: _ -> QuestionMark :: lex_helper (drop_first chars)
+    | ':' :: _ -> Colon :: lex_helper (drop_first chars)
     | c :: _ when is_whitespace c -> lex_helper (drop_first chars)
     | c :: _ when is_digit c -> lex_constant chars
     | _ -> lex_identifier chars
