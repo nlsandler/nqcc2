@@ -175,6 +175,8 @@ let rec emit_tacky_for_statement = function
   | Ast.LabeledStatement (lbl, stmt) ->
       T.Label lbl :: emit_tacky_for_statement stmt
   | Ast.Goto lbl -> [ T.Jump lbl ]
+  | Ast.Compound (Block items) ->
+      List.concat_map emit_tacky_for_block_item items
   | Ast.Null -> []
 
 and emit_tacky_for_block_item = function
@@ -207,9 +209,11 @@ and emit_tacky_for_if_statement condition then_clause = function
         :: emit_tacky_for_statement else_clause
       @ [ T.Label end_label ]
 
-let emit_tacky_for_function (Ast.Function { name; body }) =
+let emit_tacky_for_function (Ast.Function { name; body = Block block_items }) =
   (* Use the tacky_instructions queue to accumulate instructions as we go *)
-  let body_instructions = List.concat_map emit_tacky_for_block_item body in
+  let body_instructions =
+    List.concat_map emit_tacky_for_block_item block_items
+  in
   let extra_return = T.(Return (Constant 0)) in
   Tacky.Function { name; body = body_instructions @ [ extra_return ] }
 

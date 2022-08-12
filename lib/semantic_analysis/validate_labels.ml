@@ -14,18 +14,21 @@ let rec collect_labels_from_statement (defined, used) = function
       match else_clause with
       | Some stmt -> collect_labels_from_statement (defined', used') stmt
       | None -> (defined', used'))
+  | Compound (Block block_items) ->
+      List.fold_left collect_labels_from_block_item (defined, used) block_items
   | Return _ | Null | Expression _ -> (defined, used)
 
-let collect_labels_from_block_item lbls = function
+and collect_labels_from_block_item lbls = function
   | Ast.S stmt -> collect_labels_from_statement lbls stmt
   | Ast.D _ -> lbls
 
-let validate_labels_in_fun (Function { body; _ }) =
+let validate_labels_in_fun (Function { body = Block block_items; _ }) =
   let labels_defined, labels_used =
     (* traverse AST to find all labels that are defined or used in goto statements;
        * collect_labels will also throw an error if it finds a duplicate label
     *)
-    List.fold_left collect_labels_from_block_item (Set.empty, Set.empty) body
+    List.fold_left collect_labels_from_block_item (Set.empty, Set.empty)
+      block_items
   in
   let undefined = Set.diff labels_used labels_defined in
   if not (Set.is_empty undefined) then
