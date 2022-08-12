@@ -39,8 +39,16 @@ let replace_pseudos_in_instruction state = function
       let state1, new_dst = replace_operand state dst in
       let new_unary = Unary (op, new_dst) in
       (state1, new_unary)
+  | Binary { op; src; dst } ->
+      let state1, new_src = replace_operand state src in
+      let state2, new_dst = replace_operand state1 dst in
+      let new_binary = Binary { op; src = new_src; dst = new_dst } in
+      (state2, new_binary)
+  | Idiv op ->
+      let state1, new_op = replace_operand state op in
+      (state1, Idiv new_op)
       (* Ret instruction has no operands, doesn't need to be rewritten *)
-  | Ret -> (state, Ret)
+  | (Ret | Cdq) as other -> (state, other)
   | AllocateStack _ ->
       failwith
         "Internal error: AllocateStack shouldn't be present at this point"

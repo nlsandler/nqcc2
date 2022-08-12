@@ -34,6 +34,10 @@ let rec lex_helper chars =
     | [ '-'; '-' ] -> DoubleHyphen :: lex_helper (drop 2 chars)
     | '-' :: _ -> Hyphen :: lex_helper (drop_first chars)
     | '~' :: _ -> Tilde :: lex_helper (drop_first chars)
+    | '+' :: _ -> Plus :: lex_helper (drop_first chars)
+    | '*' :: _ -> Star :: lex_helper (drop_first chars)
+    | '/' :: _ -> Slash :: lex_helper (drop_first chars)
+    | '%' :: _ -> Percent :: lex_helper (drop_first chars)
     | c :: _ when is_whitespace c -> lex_helper (drop_first chars)
     | c :: _ when is_digit c -> lex_constant chars
     | _ -> lex_identifier chars
