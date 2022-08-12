@@ -2,6 +2,9 @@ module T = struct
   include Tacky
 end
 
+let break_label id = "break." ^ id
+let continue_label id = "continue." ^ id
+
 let convert_op = function
   | Ast.Complement -> T.Complement
   | Ast.Negate -> T.Negate
@@ -113,7 +116,7 @@ and emit_conditional_expression condition e1 e2 =
   let e2_label = Unique_ids.make_label "conditional_else" in
   let end_label = Unique_ids.make_label "conditional_end" in
   let dst_name = Unique_ids.make_temporary () in
-  let dst = Tacky.Var dst_name in
+  let dst = T.Var dst_name in
   let instructions =
     eval_cond
     @ (T.JumpIfZero (c, e2_label) :: eval_v1)
@@ -137,17 +140,28 @@ let rec emit_tacky_for_statement = function
       emit_tacky_for_if_statement condition then_clause else_clause
   | Ast.Compound (Block items) ->
       List.concat_map emit_tacky_for_block_item items
+  | Ast.Break id -> [ T.Jump (break_label id) ]
+  | Ast.Continue id -> [ T.Jump (continue_label id) ]
+  | Ast.DoWhile { body; condition; id } ->
+      emit_tacky_for_do_loop body condition id
+  | Ast.While { condition; body; id } ->
+      emit_tacky_for_while_loop condition body id
+  | Ast.For { init; condition; post; body; id } ->
+      emit_tacky_for_for_loop init condition post body id
   | Ast.Null -> []
 
 and emit_tacky_for_block_item = function
   | Ast.S s -> emit_tacky_for_statement s
-  | Ast.D (Declaration { name; init = Some e }) ->
+  | Ast.D d -> emit_declaration d
+
+and emit_declaration = function
+  | Ast.Declaration { name; init = Some e } ->
       (* treat declaration with initializer like an assignment expression *)
       let eval_assignment, _assign_result =
         emit_tacky_for_exp (Ast.Assignment (Var name, e))
       in
       eval_assignment
-  | Ast.D (Declaration { init = None; _ }) ->
+  | Ast.Declaration { init = None; _ } ->
       (* don't generate instructions for declaration without initializer *) []
 
 and emit_tacky_for_if_statement condition then_clause = function
@@ -169,12 +183,58 @@ and emit_tacky_for_if_statement condition then_clause = function
         :: emit_tacky_for_statement else_clause
       @ [ T.Label end_label ]
 
+and emit_tacky_for_do_loop body condition id =
+  let start_label = Unique_ids.make_label "do_loop_start" in
+  let cont_label = continue_label id in
+  let br_label = break_label id in
+  let eval_condition, c = emit_tacky_for_exp condition in
+  (T.Label start_label :: emit_tacky_for_statement body)
+  @ (T.Label cont_label :: eval_condition)
+  @ [ T.JumpIfNotZero (c, start_label); T.Label br_label ]
+
+and emit_tacky_for_while_loop condition body id =
+  let cont_label = continue_label id in
+  let br_label = break_label id in
+  let eval_condition, c = emit_tacky_for_exp condition in
+  (T.Label cont_label :: eval_condition)
+  @ (T.JumpIfZero (c, br_label) :: emit_tacky_for_statement body)
+  @ [ T.Jump cont_label; T.Label br_label ]
+
+and emit_tacky_for_for_loop init condition post body id =
+  (* generate some labels *)
+  let start_label = Unique_ids.make_label "for_start" in
+  let cont_label = continue_label id in
+  let br_label = break_label id in
+  let for_init_instructions =
+    match init with
+    | InitDecl d -> emit_declaration d
+    | InitExp e -> (
+        match Option.map emit_tacky_for_exp e with
+        | Some (instrs, _) -> instrs
+        | None -> [])
+  in
+  let test_condition =
+    match Option.map emit_tacky_for_exp condition with
+    | Some (instrs, v) -> instrs @ [ T.JumpIfZero (v, br_label) ]
+    | None -> []
+  in
+  let post_instructions =
+    match Option.map emit_tacky_for_exp post with
+    | Some (instrs, _post_result) -> instrs
+    | None -> []
+  in
+  for_init_instructions
+  @ (T.Label start_label :: test_condition)
+  @ emit_tacky_for_statement body
+  @ (T.Label cont_label :: post_instructions)
+  @ [ T.Jump start_label; T.Label br_label ]
+
 let emit_tacky_for_function (Ast.Function { name; body = Block block_items }) =
   (* Use the tacky_instructions queue to accumulate instructions as we go *)
   let body_instructions =
     List.concat_map emit_tacky_for_block_item block_items
   in
   let extra_return = T.(Return (Constant 0)) in
-  Tacky.Function { name; body = body_instructions @ [ extra_return ] }
+  T.Function { name; body = body_instructions @ [ extra_return ] }
 
 let gen (Ast.Program fn_def) = T.Program (emit_tacky_for_function fn_def)

@@ -10,6 +10,11 @@ let id_to_tok = function
   | "void" -> KWVoid
   | "if" -> KWIf
   | "else" -> KWElse
+  | "do" -> KWDo
+  | "while" -> KWWhile
+  | "for" -> KWFor
+  | "break" -> KWBreak
+  | "continue" -> KWContinue
   | other -> Identifier other
 
 (* whitespace characters: space, tab, newline, vertical tab, form feed *)
