@@ -33,6 +33,8 @@ let convert_identifier = function
   | "int" -> T.KWInt
   | "return" -> T.KWReturn
   | "void" -> T.KWVoid
+  | "if" -> T.KWIf
+  | "else" -> T.KWElse
   | other -> T.Identifier other
 
 let convert_int s = T.Constant (int_of_string s)
@@ -80,6 +82,8 @@ let token_defs =
     def "<=" (literal T.LessOrEqual);
     def ">=" (literal T.GreaterOrEqual);
     def "=" (literal T.EqualSign);
+    def {_|\?|_} (literal T.QuestionMark);
+    def ":" (literal T.Colon);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)

@@ -58,6 +58,7 @@ module Private = struct
     | T.DoubleEqual | T.NotEqual -> Some 30
     | T.LogicalAnd -> Some 10
     | T.LogicalOr -> Some 5
+    | T.QuestionMark -> Some 3
     | T.EqualSign -> Some 1
     | _ -> None
 
@@ -113,8 +114,17 @@ module Private = struct
     (* errors *)
     | t -> raise_error ~expected:(Name "a factor") ~actual:t
 
-  (* <exp> ::= <factor> | <exp> <binop> <exp>
-   * Precedence parsing algorithm (see Listing 5-8) *)
+  (* Helper function to parse the middle of a conditional expression:
+   * "?" <exp> ":"
+   *)
+  and parse_conditional_middle tokens =
+    expect QuestionMark tokens;
+    let e = parse_exp 0 tokens in
+    expect Colon tokens;
+    e
+
+  (* <exp> ::= <factor> | <exp> <binop> <exp> | <exp> "?" <exp> ":" <exp>
+   * Precedence parsing algorithm (see Listing 6-9) *)
   and parse_exp min_prec tokens =
     let initial_factor = parse_factor tokens in
     let next_token = Tok_stream.peek tokens in
@@ -126,6 +136,11 @@ module Private = struct
               let _ = Tok_stream.take_token tokens in
               let right = parse_exp prec tokens in
               Ast.Assignment (left, right)
+            else if next = T.QuestionMark then
+              let middle = parse_conditional_middle tokens in
+              let right = parse_exp prec tokens in
+              Ast.Conditional
+                { condition = left; then_result = middle; else_result = right }
             else
               let operator = parse_binop tokens in
               let right = parse_exp (prec + 1) tokens in
@@ -160,8 +175,12 @@ module Private = struct
 
   (*** Statements and blocks ***)
 
-  (* <statement> ::= "return" <exp> ";" | <exp> ";" | ";" *)
-  let parse_statement tokens =
+  (* <statement> ::= "return" <exp> ";"
+   *               | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+   *               | <exp> ";"
+   *               | ";"
+   *)
+  let rec parse_statement tokens =
     match Tok_stream.peek tokens with
     (* "return" <exp> ";" *)
     | T.KWReturn ->
@@ -175,6 +194,24 @@ module Private = struct
         (* consume semicolon *)
         let _ = Tok_stream.take_token tokens in
         Ast.Null
+        (* "if" "(" <exp> ")" <statement> [ "else" <statement> ] *)
+    | T.KWIf ->
+        (* if statement - consume if keyword *)
+        let _ = Tok_stream.take_token tokens in
+        expect T.OpenParen tokens;
+        let condition = parse_exp 0 tokens in
+        expect T.CloseParen tokens;
+        let then_clause = parse_statement tokens in
+        let else_clause =
+          if Tok_stream.peek tokens = T.KWElse then
+            (* there is an else clause - consume the else keyword *)
+            let _ = Tok_stream.take_token tokens in
+
+            Some (parse_statement tokens)
+          else (* there's no else clause *)
+            None
+        in
+        Ast.If { condition; then_clause; else_clause }
     (* <exp> ";" *)
     | _ ->
         let exp = parse_exp 0 tokens in
