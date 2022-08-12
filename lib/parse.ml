@@ -52,16 +52,23 @@ module Private = struct
   let get_precedence = function
     | T.Star | T.Slash | T.Percent -> Some 50
     | T.Plus | T.Hyphen -> Some 45
+    | T.LessThan | T.LessOrEqual | T.GreaterThan | T.GreaterOrEqual -> Some 35
+    | T.DoubleEqual | T.NotEqual -> Some 30
+    | T.LogicalAnd -> Some 10
+    | T.LogicalOr -> Some 5
     | _ -> None
 
-  (* <unop> ::= "-" | "~" *)
+  (* <unop> ::= "-" | "~" | "!" *)
   let parse_unop tokens =
     match Tok_stream.take_token tokens with
     | T.Tilde -> Ast.Complement
     | T.Hyphen -> Ast.Negate
+    | T.Bang -> Ast.Not
     | other -> raise_error ~expected:(Name "a unary operator") ~actual:other
 
-  (* <binop> ::= "-" | "+" | "*" | "/" | "%" *)
+  (* <binop> ::= "-" | "+" | "*" | "/" | "%" | "&&" | "||"
+   *           | "==" | "!=" | "<" | "<=" | ">" | ">="
+   *)
   let parse_binop tokens =
     match Tok_stream.take_token tokens with
     | T.Plus -> Ast.Add
@@ -69,6 +76,14 @@ module Private = struct
     | T.Star -> Ast.Multiply
     | T.Slash -> Ast.Divide
     | T.Percent -> Ast.Mod
+    | T.LogicalAnd -> Ast.And
+    | T.LogicalOr -> Ast.Or
+    | T.DoubleEqual -> Ast.Equal
+    | T.NotEqual -> Ast.NotEqual
+    | T.LessThan -> Ast.LessThan
+    | T.LessOrEqual -> Ast.LessOrEqual
+    | T.GreaterThan -> Ast.GreaterThan
+    | T.GreaterOrEqual -> Ast.GreaterOrEqual
     | other -> raise_error ~expected:(Name "a binary operator") ~actual:other
 
   (* <factor> ::= <int> | <unop> <factor> | "(" <exp> ")"
@@ -79,7 +94,7 @@ module Private = struct
     (* constant *)
     | T.Constant _ -> parse_int tokens
     (* unary expression *)
-    | T.Hyphen | T.Tilde ->
+    | T.Hyphen | T.Tilde | T.Bang ->
         let operator = parse_unop tokens in
         let inner_exp = parse_factor tokens in
         Ast.Unary (operator, inner_exp)

@@ -7,3 +7,8 @@ let make_temporary () =
    * with real function or variable names in the symbol table,
    * when we start tracking symbols in later chapters *)
   "tmp." ^ Int.to_string n
+
+let make_label prefix =
+  let n = !counter in
+  counter := n + 1;
+  prefix ^ "." ^ Int.to_string n

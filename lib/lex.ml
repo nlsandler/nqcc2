@@ -70,6 +70,15 @@ let token_defs =
     def {_|\*|_} (literal T.Star);
     def "/" (literal T.Slash);
     def "%" (literal T.Percent);
+    def "!" (literal T.Bang);
+    def "&&" (literal T.LogicalAnd);
+    def {_|\|\||_} (literal T.LogicalOr);
+    def "==" (literal T.DoubleEqual);
+    def "!=" (literal T.NotEqual);
+    def "<" (literal T.LessThan);
+    def ">" (literal T.GreaterThan);
+    def "<=" (literal T.LessOrEqual);
+    def ">=" (literal T.GreaterOrEqual);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)
