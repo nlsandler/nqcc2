@@ -9,6 +9,7 @@
   compile
   emit
   instruction_fixup
+  label_loops
   lex
   parse
   replace_pseudos

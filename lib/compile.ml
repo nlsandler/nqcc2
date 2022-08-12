@@ -14,8 +14,11 @@ let compile stage src_file =
     let ast = Parse.parse tokens in
     if stage = Settings.Parse then ()
     else
-      (* Semantic analysis *)
-      let validated_ast = Var_resolution.resolve ast in
+      (* Semantic analysis has two steps:
+       * 1. resolve variables *)
+      let resolved_ast = Var_resolution.resolve ast in
+      (* 2. annotate loops and break/continue statements *)
+      let validated_ast = Label_loops.label_loops resolved_ast in
       if stage = Settings.Validate then ()
       else
         (* Convert the AST to TACKY *)
