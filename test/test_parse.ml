@@ -3,7 +3,8 @@
 open Nqcc
 
 let%test "expression" =
-  Parse.Private.parse_exp (Tok_stream.of_list [ Tokens.Constant 100 ])
+  Parse.Private.parse_exp 40
+    (Tok_stream.of_list [ Tokens.Constant 100; Tokens.Semicolon ])
   = Ast.Constant 100
 
 let%test "statement" =

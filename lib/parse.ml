@@ -48,6 +48,12 @@ module Private = struct
     | T.Constant c -> Ast.Constant c
     | other -> raise_error ~expected:(Name "a constant") ~actual:other
 
+  (* return Some prec if token represents a binary operator, None otherwise*)
+  let get_precedence = function
+    | T.Star | T.Slash | T.Percent -> Some 50
+    | T.Plus | T.Hyphen -> Some 45
+    | _ -> None
+
   (* <unop> ::= "-" | "~" *)
   let parse_unop tokens =
     match Tok_stream.take_token tokens with
@@ -55,9 +61,19 @@ module Private = struct
     | T.Hyphen -> Ast.Negate
     | other -> raise_error ~expected:(Name "a unary operator") ~actual:other
 
-  (* <exp> ::= <int> | <unop> <exp> | "(" <exp> ")"
-   * See Listing 2-7 *)
-  let rec parse_exp tokens =
+  (* <binop> ::= "-" | "+" | "*" | "/" | "%" *)
+  let parse_binop tokens =
+    match Tok_stream.take_token tokens with
+    | T.Plus -> Ast.Add
+    | T.Hyphen -> Ast.Subtract
+    | T.Star -> Ast.Multiply
+    | T.Slash -> Ast.Divide
+    | T.Percent -> Ast.Mod
+    | other -> raise_error ~expected:(Name "a binary operator") ~actual:other
+
+  (* <factor> ::= <int> | <unop> <factor> | "(" <exp> ")"
+   * See Listing 3-5 *)
+  let rec parse_factor tokens =
     let next_token = Tok_stream.peek tokens in
     match next_token with
     (* constant *)
@@ -65,23 +81,39 @@ module Private = struct
     (* unary expression *)
     | T.Hyphen | T.Tilde ->
         let operator = parse_unop tokens in
-        let inner_exp = parse_exp tokens in
-        Unary (operator, inner_exp)
+        let inner_exp = parse_factor tokens in
+        Ast.Unary (operator, inner_exp)
     (* parenthesized expression *)
     | T.OpenParen ->
-        (* Consumes open paren *)
+        (* Consume open paren *)
         let _ = Tok_stream.take_token tokens in
-        let e = parse_exp tokens in
+        let e = parse_exp 0 tokens in
         expect T.CloseParen tokens;
         e
     (* errors *)
-    | t -> raise_error ~expected:(Name "an expression") ~actual:t
+    | t -> raise_error ~expected:(Name "a factor") ~actual:t
+
+  (* <exp> ::= <factor> | <exp> <binop> <exp>
+   * Precedence parsing algorithm (see Listing 3-7) *)
+  and parse_exp min_prec tokens =
+    let initial_factor = parse_factor tokens in
+    let next_token = Tok_stream.peek tokens in
+    let rec parse_exp_loop left next =
+      match get_precedence next with
+      | Some prec when prec >= min_prec ->
+          let operator = parse_binop tokens in
+          let right = parse_exp (prec + 1) tokens in
+          let left = Ast.Binary (operator, left, right) in
+          parse_exp_loop left (Tok_stream.peek tokens)
+      | _ -> left
+    in
+    parse_exp_loop initial_factor next_token
 
   (* <statement> ::= "return" <exp> ";"
    * See Listing 1-7 *)
   let parse_statement tokens =
     expect T.KWReturn tokens;
-    let exp = parse_exp tokens in
+    let exp = parse_exp 0 tokens in
     expect T.Semicolon tokens;
     Ast.Return exp
 

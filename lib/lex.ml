@@ -66,6 +66,10 @@ let token_defs =
     def "-" (literal T.Hyphen);
     def "--" (literal T.DoubleHyphen);
     def "~" (literal T.Tilde);
+    def {_|\+|_} (literal T.Plus);
+    def {_|\*|_} (literal T.Star);
+    def "/" (literal T.Slash);
+    def "%" (literal T.Percent);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)
