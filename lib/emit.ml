@@ -10,8 +10,18 @@ let show_operand = function
   (* printing out pseudoregisters is only for debugging *)
   | Pseudo name -> Printf.sprintf "%%%s" name [@coverage off]
 
+let show_byte_operand = function
+  | Reg AX -> "%al"
+  | Reg DX -> "%dl"
+  | Reg R10 -> "%r10b"
+  | Reg R11 -> "%r11b"
+  | other -> show_operand other
+
 let show_label name =
   match !Settings.platform with OS_X -> "_" ^ name | Linux -> name
+
+let show_local_label label =
+  match !Settings.platform with OS_X -> "L" ^ label | Linux -> ".L" ^ label
 
 let show_unary_instruction = function Neg -> "negl" | Not -> "notl"
 
@@ -19,6 +29,14 @@ let show_binary_instruction = function
   | Add -> "addl"
   | Sub -> "subl"
   | Mult -> "imull"
+
+let show_cond_code = function
+  | E -> "e"
+  | NE -> "ne"
+  | G -> "g"
+  | GE -> "ge"
+  | L -> "l"
+  | LE -> "le"
 
 let emit_instruction chan = function
   | Mov (src, dst) ->
@@ -32,8 +50,19 @@ let emit_instruction chan = function
       Printf.fprintf chan "\t%s %s, %s\n"
         (show_binary_instruction op)
         (show_operand src) (show_operand dst)
+  | Cmp (src, dst) ->
+      Printf.fprintf chan "\tcmpl %s, %s\n" (show_operand src)
+        (show_operand dst)
   | Idiv operand -> Printf.fprintf chan "\tidivl %s\n" (show_operand operand)
   | Cdq -> Printf.fprintf chan "\tcdq\n"
+  | Jmp lbl -> Printf.fprintf chan "\tjmp %s\n" (show_local_label lbl)
+  | JmpCC (code, lbl) ->
+      Printf.fprintf chan "\tj%s %s\n" (show_cond_code code)
+        (show_local_label lbl)
+  | SetCC (code, operand) ->
+      Printf.fprintf chan "\tset%s %s\n" (show_cond_code code)
+        (show_byte_operand operand)
+  | Label lbl -> Printf.fprintf chan "%s:\n" (show_local_label lbl)
   | AllocateStack i -> Printf.fprintf chan "\tsubq $%d, %%rsp\n" i
   | Ret ->
       Printf.fprintf chan {|
