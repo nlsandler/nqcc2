@@ -26,4 +26,13 @@ type t =
   | Pipe
   | DoubleLeftBracket
   | DoubleRightBracket
+  | Bang (* ! *)
+  | LogicalAnd (* && *)
+  | LogicalOr (* || *)
+  | DoubleEqual (* == *)
+  | NotEqual (* != *)
+  | LessThan
+  | GreaterThan
+  | LessOrEqual
+  | GreaterOrEqual
 [@@deriving show]

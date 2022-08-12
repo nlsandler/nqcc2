@@ -21,6 +21,11 @@ let fixup_instruction = function
         Binary { op = Mult; src; dst = Reg R11 };
         Mov (Reg R11, dst);
       ]
+  (* Both operands of cmp can't be in memory *)
+  | Cmp ((Stack _ as src), (Stack _ as dst)) ->
+      [ Mov (src, Reg R10); Cmp (Reg R10, dst) ]
+  (* Second operand of cmp can't be a constant *)
+  | Cmp (src, Imm i) -> [ Mov (Imm i, Reg R11); Cmp (src, Reg R11) ]
   | other -> [ other ]
 
 let fixup_function last_stack_slot (Function { name; instructions }) =

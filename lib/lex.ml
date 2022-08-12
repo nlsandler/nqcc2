@@ -21,6 +21,17 @@ let id_to_tok = function
 let rec lex_helper chars =
   match chars with
   | [] -> [] (* we've processed the whole input *)
+  | '&' :: '&' :: rest -> LogicalAnd :: lex_helper rest
+  | '|' :: '|' :: rest -> LogicalOr :: lex_helper rest
+  | '=' :: '=' :: rest -> DoubleEqual :: lex_helper rest
+  | '!' :: '=' :: rest -> NotEqual :: lex_helper rest
+  | '<' :: '=' :: rest -> LessOrEqual :: lex_helper rest
+  | '>' :: '=' :: rest -> GreaterOrEqual :: lex_helper rest
+  | '<' :: '<' :: rest -> DoubleLeftBracket :: lex_helper rest
+  | '>' :: '>' :: rest -> DoubleRightBracket :: lex_helper rest
+  | '<' :: rest -> LessThan :: lex_helper rest
+  | '>' :: rest -> GreaterThan :: lex_helper rest
+  | '!' :: rest -> Bang :: lex_helper rest
   | '{' :: rest -> OpenBrace :: lex_helper rest
   | '}' :: rest -> CloseBrace :: lex_helper rest
   | '(' :: rest -> OpenParen :: lex_helper rest
@@ -36,8 +47,6 @@ let rec lex_helper chars =
   | '&' :: rest -> Ampersand :: lex_helper rest
   | '^' :: rest -> Caret :: lex_helper rest
   | '|' :: rest -> Pipe :: lex_helper rest
-  | '<' :: '<' :: rest -> DoubleLeftBracket :: lex_helper rest
-  | '>' :: '>' :: rest -> DoubleRightBracket :: lex_helper rest
   | c :: rest when Char.is_whitespace c -> lex_helper rest
   | c :: _ when Char.is_digit c -> lex_constant chars
   | _ -> lex_identifier chars

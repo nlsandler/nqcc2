@@ -1,4 +1,4 @@
-type unary_operator = Complement | Negate [@@deriving show]
+type unary_operator = Complement | Negate | Not [@@deriving show]
 
 type binary_operator =
   | Add
@@ -11,6 +11,14 @@ type binary_operator =
   | BitwiseXor
   | BitshiftLeft
   | BitshiftRight
+  | And
+  | Or
+  | Equal
+  | NotEqual
+  | LessThan
+  | LessOrEqual
+  | GreaterThan
+  | GreaterOrEqual
 [@@deriving show]
 
 type exp =
