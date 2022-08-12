@@ -48,6 +48,7 @@ let get_precedence = function
   | T.(DoubleEqual | NotEqual) -> Some 30
   | T.LogicalAnd -> Some 10
   | T.LogicalOr -> Some 5
+  | T.QuestionMark -> Some 3
   | T.EqualSign -> Some 1
   | _ -> None
 
@@ -121,23 +122,39 @@ let rec parse_factor tokens =
   (* errors *)
   | t -> raise_error ~expected:(Name "a factor") ~actual:t
 
-(* <exp> ::= <factor> | <exp> <binop> <exp> *)
+(* "?" <exp> ":" *)
+and parse_conditional_middle tokens =
+  let _ = expect QuestionMark tokens in
+  let e = parse_expression 0 tokens in
+  let _ = expect Colon tokens in
+  e
+
+(* <exp> ::= <factor> | <exp> <binop> <exp> | <exp> "?" <exp> ":" <exp> *)
 and parse_expression min_prec tokens =
   let initial_factor = parse_factor tokens in
   let next_token = peek tokens in
   let rec parse_exp_loop left next =
     match get_precedence next with
-    | Some prec when prec >= min_prec ->
-        if next = T.EqualSign then
-          let _ = Stream.junk tokens in
-          let right = parse_expression prec tokens in
-          let left = Assignment (left, right) in
-          parse_exp_loop left (peek tokens)
-        else
-          let operator = parse_binop tokens in
-          let right = parse_expression (prec + 1) tokens in
-          let left = Binary (operator, left, right) in
-          parse_exp_loop left (peek tokens)
+    | Some prec when prec >= min_prec -> (
+        match next with
+        | T.EqualSign ->
+            let _ = Stream.junk tokens in
+            let right = parse_expression prec tokens in
+            let left = Assignment (left, right) in
+            parse_exp_loop left (peek tokens)
+        | T.QuestionMark ->
+            let middle = parse_conditional_middle tokens in
+            let right = parse_expression prec tokens in
+            let left =
+              Conditional
+                { condition = left; then_result = middle; else_result = right }
+            in
+            parse_exp_loop left (peek tokens)
+        | _ ->
+            let operator = parse_binop tokens in
+            let right = parse_expression (prec + 1) tokens in
+            let left = Binary (operator, left, right) in
+            parse_exp_loop left (peek tokens))
     | _ -> left
   in
   parse_exp_loop initial_factor next_token
@@ -155,9 +172,14 @@ let parse_declaration tokens =
   | other ->
       raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
-(* <statement> ::= "return" <exp> ";" | <exp> ";" | ";" *)
-let parse_statement tokens =
+(* <statement> ::= "return" <exp> ";"
+                 | <exp> ";"
+                 | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+                 | ";"
+*)
+let rec parse_statement tokens =
   match peek tokens with
+  | T.KWIf -> parse_if_statement tokens
   | T.KWReturn ->
       (* consume return keyword *)
       let _ = Stream.junk tokens in
@@ -172,6 +194,23 @@ let parse_statement tokens =
       let exp = parse_expression 0 tokens in
       expect T.Semicolon tokens;
       Expression exp
+
+(* helper functions to parse individual statements *)
+and parse_if_statement tokens =
+  let _ = expect KWIf tokens in
+  let _ = expect OpenParen tokens in
+  let condition = parse_expression 0 tokens in
+  let _ = expect CloseParen tokens in
+  let then_clause = parse_statement tokens in
+  let else_clause =
+    match peek tokens with
+    | KWElse ->
+        (* there is an else clause - consume the else keyword *)
+        let _ = Stream.junk tokens in
+        Some (parse_statement tokens)
+    | _ -> None
+  in
+  If { condition; then_clause; else_clause }
 
 (* <block-item> ::= <statement> | <declaration> *)
 let parse_block_item tokens =
