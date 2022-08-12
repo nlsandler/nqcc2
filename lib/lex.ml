@@ -26,6 +26,15 @@ let rec lex_helper chars =
   if chars = String.empty (* we've processed the whole input *) then []
   else
     match prefix chars 2 with
+    | '&' :: '&' :: _ -> LogicalAnd :: lex_helper (drop 2 chars)
+    | '|' :: '|' :: _ -> LogicalOr :: lex_helper (drop 2 chars)
+    | '=' :: '=' :: _ -> DoubleEqual :: lex_helper (drop 2 chars)
+    | '!' :: '=' :: _ -> NotEqual :: lex_helper (drop 2 chars)
+    | '<' :: '=' :: _ -> LessOrEqual :: lex_helper (drop 2 chars)
+    | '>' :: '=' :: _ -> GreaterOrEqual :: lex_helper (drop 2 chars)
+    | '<' :: _ -> LessThan :: lex_helper (drop_first chars)
+    | '>' :: _ -> GreaterThan :: lex_helper (drop_first chars)
+    | '!' :: _ -> Bang :: lex_helper (drop_first chars)
     | '{' :: _ -> OpenBrace :: lex_helper (drop_first chars)
     | '}' :: _ -> CloseBrace :: lex_helper (drop_first chars)
     | '(' :: _ -> OpenParen :: lex_helper (drop_first chars)

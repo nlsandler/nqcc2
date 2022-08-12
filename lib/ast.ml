@@ -1,6 +1,19 @@
-type unary_operator = Complement | Negate [@@deriving show]
+type unary_operator = Complement | Negate | Not [@@deriving show]
 
-type binary_operator = Add | Subtract | Multiply | Divide | Mod
+type binary_operator =
+  | Add
+  | Subtract
+  | Multiply
+  | Divide
+  | Mod
+  | And
+  | Or
+  | Equal
+  | NotEqual
+  | LessThan
+  | LessOrEqual
+  | GreaterThan
+  | GreaterOrEqual
 [@@deriving show]
 
 type exp =
