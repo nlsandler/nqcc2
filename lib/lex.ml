@@ -79,6 +79,7 @@ let token_defs =
     def ">" (literal T.GreaterThan);
     def "<=" (literal T.LessOrEqual);
     def ">=" (literal T.GreaterOrEqual);
+    def "=" (literal T.EqualSign);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)

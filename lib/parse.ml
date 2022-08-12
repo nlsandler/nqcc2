@@ -42,6 +42,8 @@ module Private = struct
     | T.Identifier x -> x
     | other -> raise_error ~expected:(Name "an identifier") ~actual:other
 
+  (*** Expressions ***)
+
   (* <int> ::= ? A constant token ? *)
   let parse_int tokens =
     match Tok_stream.take_token tokens with
@@ -56,6 +58,7 @@ module Private = struct
     | T.DoubleEqual | T.NotEqual -> Some 30
     | T.LogicalAnd -> Some 10
     | T.LogicalOr -> Some 5
+    | T.EqualSign -> Some 1
     | _ -> None
 
   (* <unop> ::= "-" | "~" | "!" *)
@@ -67,7 +70,8 @@ module Private = struct
     | other -> raise_error ~expected:(Name "a unary operator") ~actual:other
 
   (* <binop> ::= "-" | "+" | "*" | "/" | "%" | "&&" | "||"
-   *           | "==" | "!=" | "<" | "<=" | ">" | ">="
+   *           | "==" | "!=" | "<" | "<=" | ">" | ">=" | "="
+   * but we parse "=" in parse_exp, not here.
    *)
   let parse_binop tokens =
     match Tok_stream.take_token tokens with
@@ -86,13 +90,14 @@ module Private = struct
     | T.GreaterOrEqual -> Ast.GreaterOrEqual
     | other -> raise_error ~expected:(Name "a binary operator") ~actual:other
 
-  (* <factor> ::= <int> | <unop> <factor> | "(" <exp> ")"
-   * See Listing 3-5 *)
+  (* <factor> ::= <int> | <identifier> | <unop> <factor> | "(" <exp> ")" *)
   let rec parse_factor tokens =
     let next_token = Tok_stream.peek tokens in
     match next_token with
     (* constant *)
     | T.Constant _ -> parse_int tokens
+    (* identifier *)
+    | T.Identifier _ -> Ast.Var (parse_id tokens)
     (* unary expression *)
     | T.Hyphen | T.Tilde | T.Bang ->
         let operator = parse_unop tokens in
@@ -109,30 +114,82 @@ module Private = struct
     | t -> raise_error ~expected:(Name "a factor") ~actual:t
 
   (* <exp> ::= <factor> | <exp> <binop> <exp>
-   * Precedence parsing algorithm (see Listing 3-7) *)
+   * Precedence parsing algorithm (see Listing 5-8) *)
   and parse_exp min_prec tokens =
     let initial_factor = parse_factor tokens in
     let next_token = Tok_stream.peek tokens in
     let rec parse_exp_loop left next =
       match get_precedence next with
       | Some prec when prec >= min_prec ->
-          let operator = parse_binop tokens in
-          let right = parse_exp (prec + 1) tokens in
-          let left = Ast.Binary (operator, left, right) in
+          let left =
+            if next = T.EqualSign then
+              let _ = Tok_stream.take_token tokens in
+              let right = parse_exp prec tokens in
+              Ast.Assignment (left, right)
+            else
+              let operator = parse_binop tokens in
+              let right = parse_exp (prec + 1) tokens in
+              Ast.Binary (operator, left, right)
+          in
           parse_exp_loop left (Tok_stream.peek tokens)
       | _ -> left
     in
     parse_exp_loop initial_factor next_token
 
-  (* <statement> ::= "return" <exp> ";"
-   * See Listing 1-7 *)
-  let parse_statement tokens =
-    expect T.KWReturn tokens;
-    let exp = parse_exp 0 tokens in
-    expect T.Semicolon tokens;
-    Ast.Return exp
+  (*** Declarations ***)
 
-  (* <function> ::= "int" <identifier> "(" "void" ")" "{" <statement> "}" *)
+  (* <declaration> ::= "int" <identifier> [ "=" <exp> ] ";" *)
+  let parse_declaration tokens =
+    expect T.KWInt tokens;
+    let var_name = parse_id tokens in
+    let init =
+      match Tok_stream.take_token tokens with
+      (* No initializer *)
+      | T.Semicolon -> None
+      (* There is an initializer *)
+      | T.EqualSign ->
+          let init_exp = parse_exp 0 tokens in
+          expect T.Semicolon tokens;
+          Some init_exp
+      (* Malformed declaration *)
+      | other ->
+          raise_error ~expected:(Name "An initializer or semicolon")
+            ~actual:other
+    in
+    Ast.Declaration { name = var_name; init }
+
+  (*** Statements and blocks ***)
+
+  (* <statement> ::= "return" <exp> ";" | <exp> ";" | ";" *)
+  let parse_statement tokens =
+    match Tok_stream.peek tokens with
+    (* "return" <exp> ";" *)
+    | T.KWReturn ->
+        (* consume return keyword *)
+        let _ = Tok_stream.take_token tokens in
+        let exp = parse_exp 0 tokens in
+        expect T.Semicolon tokens;
+        Ast.Return exp
+    (* ";" *)
+    | T.Semicolon ->
+        (* consume semicolon *)
+        let _ = Tok_stream.take_token tokens in
+        Ast.Null
+    (* <exp> ";" *)
+    | _ ->
+        let exp = parse_exp 0 tokens in
+        expect T.Semicolon tokens;
+        Ast.Expression exp
+
+  (* <block-item> ::= <statement> | <declaration> *)
+  let parse_block_item tokens =
+    if Tok_stream.peek tokens = T.KWInt then Ast.D (parse_declaration tokens)
+    else Ast.S (parse_statement tokens)
+
+  (*** Top Level ***)
+
+  (* <function> ::= "int" <identifier> "(" "void" ")" "{" { <block-item> } "}"
+   * See Listing 5-6 *)
   let parse_function_definition tokens =
     expect T.KWInt tokens;
     let fun_name = parse_id tokens in
@@ -140,9 +197,16 @@ module Private = struct
     expect T.KWVoid tokens;
     expect T.CloseParen tokens;
     expect T.OpenBrace tokens;
-    let statement = parse_statement tokens in
-    expect T.CloseBrace tokens;
-    Ast.Function { name = fun_name; body = statement }
+    let rec parse_block_item_loop () =
+      if Tok_stream.peek tokens = T.CloseBrace then []
+      else
+        let next_block_item = parse_block_item tokens in
+        next_block_item :: parse_block_item_loop ()
+    in
+    let body = parse_block_item_loop () in
+    (* Already peeked at next token and saw it's a brace; now remove it *)
+    let _ = Tok_stream.take_token tokens in
+    Ast.Function { name = fun_name; body }
 
   (* <program> ::= <function> *)
   let parse_program tokens =

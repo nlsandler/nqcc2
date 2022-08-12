@@ -12,6 +12,7 @@
   lex
   parse
   replace_pseudos
+  resolve
   tacky
   tacky_gen
   tacky_print

@@ -26,12 +26,20 @@ let convert_binop = function
 (* return list of instructions to evaluate expression a and resulting TACKY
    value as a pair *)
 let rec emit_tacky_for_exp = function
-  (* don't need any instructions to calculate a constant *)
+  (* don't need any instructions to calculate a constant or variable *)
   | Ast.Constant c -> ([], T.Constant c)
+  | Ast.Var v -> ([], T.Var v)
   | Ast.Unary (op, inner) -> emit_unary_expression op inner
   | Ast.Binary (And, e1, e2) -> emit_and_expression e1 e2
   | Ast.Binary (Or, e1, e2) -> emit_or_expression e1 e2
   | Ast.Binary (op, e1, e2) -> emit_binary_expression op e1 e2
+  | Ast.Assignment (Var v, rhs) ->
+      let rhs_instructions, rhs_result = emit_tacky_for_exp rhs in
+      let instructions =
+        rhs_instructions @ [ T.Copy { src = rhs_result; dst = Var v } ]
+      in
+      (instructions, Var v)
+  | Ast.Assignment _ -> failwith "Internal error: bad lvalue" [@coverage off]
 
 (* helper functions for individual expression *)
 and emit_unary_expression op inner =
@@ -97,12 +105,31 @@ and emit_or_expression e1 e2 =
   in
   (instructions, dst)
 
-let emit_tacky_for_statement (Ast.Return e) =
-  let eval_exp, v = emit_tacky_for_exp e in
-  eval_exp @ [ T.Return v ]
+let emit_tacky_for_statement = function
+  | Ast.Return e ->
+      let eval_exp, v = emit_tacky_for_exp e in
+      eval_exp @ [ T.Return v ]
+  | Ast.Expression e ->
+      (* evaluate expression but don't use result *)
+      let eval_exp, _exp_result = emit_tacky_for_exp e in
+      eval_exp
+  | Ast.Null -> []
+
+let emit_tacky_for_block_item = function
+  | Ast.S s -> emit_tacky_for_statement s
+  | Ast.D (Declaration { name; init = Some e }) ->
+      (* treat declaration with initializer like an assignment expression *)
+      let eval_assignment, _assing_result =
+        emit_tacky_for_exp (Ast.Assignment (Var name, e))
+      in
+      eval_assignment
+  | Ast.D (Declaration { init = None; _ }) ->
+      (* don't generate instructions for declaration without initializer *) []
 
 let emit_tacky_for_function (Ast.Function { name; body }) =
-  let instructions = emit_tacky_for_statement body in
-  T.Function { name; body = instructions }
+  (* Use the tacky_instructions queue to accumulate instructions as we go *)
+  let body_instructions = List.concat_map emit_tacky_for_block_item body in
+  let extra_return = T.(Return (Constant 0)) in
+  Tacky.Function { name; body = body_instructions @ [ extra_return ] }
 
 let gen (Ast.Program fn_def) = T.Program (emit_tacky_for_function fn_def)
