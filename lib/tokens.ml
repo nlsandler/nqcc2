@@ -17,4 +17,8 @@ type t =
   | Hyphen
   | DoubleHyphen
   | Tilde
+  | Plus
+  | Star
+  | Slash
+  | Percent
 [@@deriving show]

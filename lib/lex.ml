@@ -22,6 +22,10 @@ let rec lex_helper chars =
   | '-' :: '-' :: rest -> DoubleHyphen :: lex_helper rest
   | '-' :: rest -> Hyphen :: lex_helper rest
   | '~' :: rest -> Tilde :: lex_helper rest
+  | '+' :: rest -> Plus :: lex_helper rest
+  | '*' :: rest -> Star :: lex_helper rest
+  | '/' :: rest -> Slash :: lex_helper rest
+  | '%' :: rest -> Percent :: lex_helper rest
   | c :: rest when Char.is_whitespace c -> lex_helper rest
   | c :: _ when Char.is_digit c -> lex_constant chars
   | _ -> lex_identifier chars
