@@ -1,6 +1,13 @@
 open Ast
 module StringMap = Map.Make (String)
 
+type var_entry = { unique_name : string; from_current_block : bool }
+
+let copy_variable_map m =
+  (* return a copy of the map with from_current_block set to false for every
+     entry *)
+  StringMap.map (fun entry -> { entry with from_current_block = false }) m
+
 let rec resolve_exp var_map = function
   | Assignment (left, right) ->
       (* validate that lhs is an lvalue *)
@@ -18,7 +25,7 @@ let rec resolve_exp var_map = function
       Assignment (resolve_exp var_map left, resolve_exp var_map right)
   | Var v -> (
       (* rename var from map *)
-      try Var (StringMap.find v var_map)
+      try Var (StringMap.find v var_map).unique_name
       with Not_found -> failwith (Printf.sprintf "Undeclared variable %s" v))
   (* recursively process operands for unary, binary, and conditional *)
   | Unary (op, e) -> Unary (op, resolve_exp var_map e)
@@ -35,15 +42,21 @@ let rec resolve_exp var_map = function
   | Constant _ as c -> c
 
 let resolve_declaration var_map (Declaration { name; init }) =
-  if StringMap.mem name var_map then failwith "Duplicate variable declaration"
-  else
-    (* generate a unique name and add it to the map *)
-    let unique_name = Unique_ids.make_named_temporary name in
-    let new_map = StringMap.add name unique_name var_map in
-    (* resolve initializer if there is one *)
-    let resolved_init = Option.map (resolve_exp new_map) init in
-    (* return new map and resolved declaration *)
-    (new_map, Declaration { name = unique_name; init = resolved_init })
+  match StringMap.find_opt name var_map with
+  | Some { from_current_block = true; _ } ->
+      (* variable is present in the map and was defined in the current block *)
+      failwith "Duplicate variable declaration"
+  | _ ->
+      (* variable isn't in the map, or was defined in an outer scope;
+       * generate a unique name and add it to the map *)
+      let unique_name = Unique_ids.make_named_temporary name in
+      let new_map =
+        StringMap.add name { unique_name; from_current_block = true } var_map
+      in
+      (* resolve initializer if there is one *)
+      let resolved_init = Option.map (resolve_exp new_map) init in
+      (* return new map and resolved declaration *)
+      (new_map, Declaration { name = unique_name; init = resolved_init })
 
 let rec resolve_statement var_map = function
   | Return e -> Return (resolve_exp var_map e)
@@ -55,9 +68,12 @@ let rec resolve_statement var_map = function
           then_clause = resolve_statement var_map then_clause;
           else_clause = Option.map (resolve_statement var_map) else_clause;
         }
+  | Compound block ->
+      let new_variable_map = copy_variable_map var_map in
+      Compound (resolve_block new_variable_map block)
   | Null -> Null
 
-let resolve_block_item var_map = function
+and resolve_block_item var_map = function
   | S s ->
       (* resolving a statement doesn't change the variable map *)
       let resolved_s = resolve_statement var_map s in
@@ -67,11 +83,14 @@ let resolve_block_item var_map = function
       let new_map, resolved_d = resolve_declaration var_map d in
       (new_map, D resolved_d)
 
-let resolve_function_def (Function { name; body }) =
-  let var_map = StringMap.empty in
-  let _final_map, resolved_body =
-    List.fold_left_map resolve_block_item var_map body
+and resolve_block var_map (Block items) =
+  let _final_map, resolved_items =
+    List.fold_left_map resolve_block_item var_map items
   in
+  Block resolved_items
+
+let resolve_function_def (Function { name; body = blk }) =
+  let resolved_body = resolve_block StringMap.empty blk in
   Function { name; body = resolved_body }
 
 let resolve (Program fn_def) = Program (resolve_function_def fn_def)

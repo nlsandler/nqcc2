@@ -177,6 +177,7 @@ module Private = struct
 
   (* <statement> ::= "return" <exp> ";"
    *               | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+   *               | <block>
    *               | <exp> ";"
    *               | ";"
    *)
@@ -212,6 +213,7 @@ module Private = struct
             None
         in
         Ast.If { condition; then_clause; else_clause }
+    | T.OpenBrace -> Ast.Compound (parse_block tokens)
     (* <exp> ";" *)
     | _ ->
         let exp = parse_exp 0 tokens in
@@ -219,20 +221,12 @@ module Private = struct
         Ast.Expression exp
 
   (* <block-item> ::= <statement> | <declaration> *)
-  let parse_block_item tokens =
+  and parse_block_item tokens =
     if Tok_stream.peek tokens = T.KWInt then Ast.D (parse_declaration tokens)
     else Ast.S (parse_statement tokens)
 
-  (*** Top Level ***)
-
-  (* <function> ::= "int" <identifier> "(" "void" ")" "{" { <block-item> } "}"
-   * See Listing 5-6 *)
-  let parse_function_definition tokens =
-    expect T.KWInt tokens;
-    let fun_name = parse_id tokens in
-    expect T.OpenParen tokens;
-    expect T.KWVoid tokens;
-    expect T.CloseParen tokens;
+  (* <block> ::= "{" { <block-item> } "}" *)
+  and parse_block tokens =
     expect T.OpenBrace tokens;
     let rec parse_block_item_loop () =
       if Tok_stream.peek tokens = T.CloseBrace then []
@@ -240,9 +234,20 @@ module Private = struct
         let next_block_item = parse_block_item tokens in
         next_block_item :: parse_block_item_loop ()
     in
-    let body = parse_block_item_loop () in
-    (* Already peeked at next token and saw it's a brace; now remove it *)
-    let _ = Tok_stream.take_token tokens in
+    let block = parse_block_item_loop () in
+    expect T.CloseBrace tokens;
+    Ast.Block block
+
+  (*** Top Level ***)
+
+  (* <function> ::= "int" <identifier> "(" "void" ")" <block> *)
+  let parse_function_definition tokens =
+    expect T.KWInt tokens;
+    let fun_name = parse_id tokens in
+    expect T.OpenParen tokens;
+    expect T.KWVoid tokens;
+    expect T.CloseParen tokens;
+    let body = parse_block tokens in
     Ast.Function { name = fun_name; body }
 
   (* <program> ::= <function> *)
