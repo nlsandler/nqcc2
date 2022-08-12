@@ -68,8 +68,12 @@ let stage =
     let doc = "Run the lexer and parser" in
     (Settings.Parse, Arg.info [ "parse" ] ~doc)
   in
+  let validate =
+    let doc = "Run the lexer, parser, and semantic analysis " in
+    (Settings.Validate, Arg.info [ "validate" ] ~doc)
+  in
   let tacky =
-    let doc = "Run the lexer, parser, and tacky generator" in
+    let doc = "Run the lexer, parser, semantic analysis, and tacky generator" in
     (Settings.Tacky, Arg.info [ "tacky" ] ~doc)
   in
   let codegen =
@@ -81,7 +85,9 @@ let stage =
     (Settings.Assembly, Arg.info [ "s"; "S" ] ~doc)
   in
   Arg.(
-    value & vflag Settings.Executable [ lex; parse; tacky; codegen; assembly ])
+    value
+    & vflag Settings.Executable
+        [ lex; parse; validate; tacky; codegen; assembly ])
 
 let target =
   let doc = "Choose target platform" in

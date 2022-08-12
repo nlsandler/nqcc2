@@ -23,6 +23,7 @@ let rec lex_helper chars =
   | '<' :: rest -> LessThan :: lex_helper rest
   | '>' :: rest -> GreaterThan :: lex_helper rest
   | '!' :: rest -> Bang :: lex_helper rest
+  | '=' :: rest -> EqualSign :: lex_helper rest
   | '{' :: rest -> OpenBrace :: lex_helper rest
   | '}' :: rest -> CloseBrace :: lex_helper rest
   | '(' :: rest -> OpenParen :: lex_helper rest
