@@ -2,7 +2,9 @@ open Assembly
 
 let show_operand = function
   | Reg AX -> "%eax"
+  | Reg DX -> "%edx"
   | Reg R10 -> "%r10d"
+  | Reg R11 -> "%r11d"
   | Imm i -> Printf.sprintf "$%d" i
   | Stack i -> Printf.sprintf "%d(%%rbp)" i
   (* printing out pseudoregisters is only for debugging *)
@@ -13,6 +15,11 @@ let show_label name =
 
 let show_unary_instruction = function Neg -> "negl" | Not -> "notl"
 
+let show_binary_instruction = function
+  | Add -> "addl"
+  | Sub -> "subl"
+  | Mult -> "imull"
+
 let emit_instruction chan = function
   | Mov (src, dst) ->
       Printf.fprintf chan "\tmovl %s, %s\n" (show_operand src)
@@ -21,6 +28,12 @@ let emit_instruction chan = function
       Printf.fprintf chan "\t%s %s\n"
         (show_unary_instruction operator)
         (show_operand dst)
+  | Binary { op; src; dst } ->
+      Printf.fprintf chan "\t%s %s, %s\n"
+        (show_binary_instruction op)
+        (show_operand src) (show_operand dst)
+  | Idiv operand -> Printf.fprintf chan "\tidivl %s\n" (show_operand operand)
+  | Cdq -> Printf.fprintf chan "\tcdq\n"
   | AllocateStack i -> Printf.fprintf chan "\tsubq $%d, %%rsp\n" i
   | Ret ->
       Printf.fprintf chan {|
