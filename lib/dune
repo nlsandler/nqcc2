@@ -8,21 +8,27 @@
   codegen
   compile
   emit
+  identifier_resolution
   instruction_fixup
   label_loops
   lex
   parse
   replace_pseudos
+  rounding
   string_map
+  symbols
   tacky
   tacky_gen
   tacky_print
   tokens
+  typecheck
+  types
   settings
   unique_ids
-  var_resolution)
+  utils)
  (libraries ppx_deriving ppx_inline_test str camlp-streams)
+ (inline_tests)
  (preprocess
-  (pps ppx_deriving.show))
+  (pps ppx_deriving.show ppx_inline_test))
  (instrumentation
   (backend bisect_ppx)))

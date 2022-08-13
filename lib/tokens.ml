@@ -40,4 +40,5 @@ type t =
   | EqualSign (* = *)
   | QuestionMark
   | Colon
+  | Comma
 [@@deriving show]

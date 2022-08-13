@@ -57,6 +57,7 @@ let rec lex_helper chars =
     | '%' :: _ -> Percent :: lex_helper (drop_first chars)
     | '?' :: _ -> QuestionMark :: lex_helper (drop_first chars)
     | ':' :: _ -> Colon :: lex_helper (drop_first chars)
+    | ',' :: _ -> Comma :: lex_helper (drop_first chars)
     | c :: _ when is_whitespace c -> lex_helper (drop_first chars)
     | c :: _ when is_digit c -> lex_constant chars
     | _ -> lex_identifier chars

@@ -1,1 +1,1 @@
-val fixup_program : int -> Assembly.t -> Assembly.t
+val fixup_program : Assembly.t -> Assembly.t
