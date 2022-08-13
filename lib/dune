@@ -14,11 +14,15 @@
   parse
   replace_pseudos
   resolve
+  rounding
+  symbols
   tacky
   tacky_gen
   tacky_print
   tokens
   tok_stream
+  typecheck
+  types
   settings
   unique_ids
   utils)

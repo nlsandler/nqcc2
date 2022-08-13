@@ -89,6 +89,7 @@ let token_defs =
     def "=" (literal T.EqualSign);
     def {_|\?|_} (literal T.QuestionMark);
     def ":" (literal T.Colon);
+    def "," (literal T.Comma);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)

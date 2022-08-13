@@ -56,11 +56,12 @@ let replace_pseudos_in_instruction state = function
   | SetCC (code, op) ->
       let state1, new_op = replace_operand state op in
       (state1, SetCC (code, new_op))
-  | (Ret | Cdq | Label _ | JmpCC _ | Jmp _) as other -> (state, other)
-  | AllocateStack _ ->
-      failwith
-        "Internal error: AllocateStack shouldn't be present at this point"
-      [@coverage off]
+  | Push op ->
+      let state1, new_op = replace_operand state op in
+      (state1, Push new_op)
+  | ( Ret | Cdq | Label _ | JmpCC _ | Jmp _ | DeallocateStack _ | Call _
+    | AllocateStack _ ) as other ->
+      (state, other)
 
 let replace_pseudos_in_function (Function { name; instructions }) =
   let init_state = { current_offset = 0; offset_map = StringMap.empty } in
@@ -69,9 +70,9 @@ let replace_pseudos_in_function (Function { name; instructions }) =
        go *)
     List.fold_left_map replace_pseudos_in_instruction init_state instructions
   in
-  ( Function { name; instructions = fixed_instructions },
-    final_state.current_offset )
+  Symbols.set_bytes_required name final_state.current_offset;
+  Function { name; instructions = fixed_instructions }
 
-let replace_pseudos (Program fn_def) =
-  let fixed_def, last_stack_slot = replace_pseudos_in_function fn_def in
-  (Program fixed_def, last_stack_slot)
+let replace_pseudos (Program fn_defs) =
+  let fixed_defs = List.map replace_pseudos_in_function fn_defs in
+  Program fixed_defs

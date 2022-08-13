@@ -16,6 +16,10 @@ val peek : t -> Tokens.t
 (** Return the next token but don't remove it from the stream
     @raise End_of_stream if the stream is empty *)
 
+val npeek : int -> t -> Tokens.t list
+(** [npeek n stream] returns a list of the next [n] elements of [stream], or all
+    the elements if there are fewer than [n] *)
+
 val is_empty : t -> bool
 (** Return [true] if the stream is empty, [false] otherwise. *)
 

@@ -6,7 +6,6 @@ module Private : sig
   val parse_unop : Tok_stream.t -> Ast.unary_operator
   val parse_exp : int -> Tok_stream.t -> Ast.exp
   val parse_statement : Tok_stream.t -> Ast.statement
-  val parse_function_definition : Tok_stream.t -> Ast.function_definition
   val parse_program : Tok_stream.t -> Ast.t
 end
 

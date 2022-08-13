@@ -12,6 +12,8 @@ let peek tokens =
   (* empty stream - raise an exception, we'll catch it at top level *)
   | None -> raise End_of_stream
 
+let npeek = Stream.npeek
+
 let is_empty tokens =
   try
     Stream.empty tokens;

@@ -25,12 +25,13 @@ type exp =
   | Binary of binary_operator * exp * exp
   | Assignment of exp * exp
   | Conditional of { condition : exp; then_result : exp; else_result : exp }
+  | FunCall of { f : string; args : exp list }
 [@@deriving show]
 
-type declaration = Declaration of { name : string; init : exp option }
+type variable_declaration = { name : string; init : exp option }
 [@@deriving show]
 
-type for_init = InitDecl of declaration | InitExp of exp option
+type for_init = InitDecl of variable_declaration | InitExp of exp option
 [@@deriving show]
 
 type statement =
@@ -59,7 +60,15 @@ type statement =
 and block_item = S of statement | D of declaration [@@deriving show]
 and block = Block of block_item list
 
-type function_definition = Function of { name : string; body : block }
+and function_declaration = {
+  name : string;
+  params : string list;
+  body : block option;
+}
 [@@deriving show]
 
-type t = Program of function_definition [@@deriving show]
+and declaration =
+  | FunDecl of function_declaration
+  | VarDecl of variable_declaration
+
+type t = Program of function_declaration list [@@deriving show]

@@ -4,6 +4,11 @@ module ListUtil : sig
   (** [max cmp l] returns the maximum element in list [l] according to
       comparison function [cmp]
       @raise Failure if the list is empty *)
+
+  val take_drop : int -> 'a list -> 'a list * 'a list
+  (** [take_drop n l] returns one list containing the first [n] elements of [l]
+      and another list containing any remaining elements. Returns [(l, [])] if
+      [l] has [n] or fewer elements. *)
 end
 
 module StringUtil : sig

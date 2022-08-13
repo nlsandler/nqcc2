@@ -17,6 +17,3 @@ let%test "error" =
   match Parse.parse [ Tokens.KWInt ] with
   | exception Parse.ParseError _ -> true
   | _ -> false
-
-let%test "empty" =
-  match Parse.parse [] with exception Parse.ParseError _ -> true | _ -> false

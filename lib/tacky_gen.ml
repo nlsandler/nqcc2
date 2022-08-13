@@ -45,6 +45,7 @@ let rec emit_tacky_for_exp = function
   | Ast.Assignment _ -> failwith "Internal error: bad lvalue" [@coverage off]
   | Ast.Conditional { condition; then_result; else_result } ->
       emit_conditional_expression condition then_result else_result
+  | Ast.FunCall { f; args } -> emit_fun_call f args
 
 (* helper functions for individual expression *)
 and emit_unary_expression op inner =
@@ -129,6 +130,17 @@ and emit_conditional_expression condition e1 e2 =
   in
   (instructions, dst)
 
+and emit_fun_call f args =
+  let dst_name = Unique_ids.make_temporary () in
+  let dst = T.Var dst_name in
+  let arg_instructions, arg_vals =
+    List.split (List.map emit_tacky_for_exp args)
+  in
+  let instructions =
+    List.flatten arg_instructions @ [ T.FunCall { f; args = arg_vals; dst } ]
+  in
+  (instructions, dst)
+
 let rec emit_tacky_for_statement = function
   | Ast.Return e ->
       let eval_exp, v = emit_tacky_for_exp e in
@@ -153,16 +165,20 @@ let rec emit_tacky_for_statement = function
 
 and emit_tacky_for_block_item = function
   | Ast.S s -> emit_tacky_for_statement s
-  | Ast.D d -> emit_declaration d
+  | Ast.D d -> emit_local_declaration d
 
-and emit_declaration = function
-  | Ast.Declaration { name; init = Some e } ->
+and emit_local_declaration = function
+  | Ast.VarDecl vd -> emit_var_declaration vd
+  | Ast.FunDecl _ -> []
+
+and emit_var_declaration = function
+  | { name; init = Some e } ->
       (* treat declaration with initializer like an assignment expression *)
       let eval_assignment, _assign_result =
         emit_tacky_for_exp (Ast.Assignment (Var name, e))
       in
       eval_assignment
-  | Ast.Declaration { init = None; _ } ->
+  | { init = None; _ } ->
       (* don't generate instructions for declaration without initializer *) []
 
 and emit_tacky_for_if_statement condition then_clause = function
@@ -208,7 +224,7 @@ and emit_tacky_for_for_loop init condition post body id =
   let br_label = break_label id in
   let for_init_instructions =
     match init with
-    | InitDecl d -> emit_declaration d
+    | InitDecl d -> emit_var_declaration d
     | InitExp e -> (
         match Option.map emit_tacky_for_exp e with
         | Some (instrs, _) -> instrs
@@ -230,12 +246,19 @@ and emit_tacky_for_for_loop init condition post body id =
   @ (T.Label cont_label :: post_instructions)
   @ [ T.Jump start_label; T.Label br_label ]
 
-let emit_tacky_for_function (Ast.Function { name; body = Block block_items }) =
-  (* Use the tacky_instructions queue to accumulate instructions as we go *)
-  let body_instructions =
-    List.concat_map emit_tacky_for_block_item block_items
-  in
-  let extra_return = T.(Return (Constant 0)) in
-  T.Function { name; body = body_instructions @ [ extra_return ] }
+let emit_fun_declaration Ast.{ name; params; body } =
+  match body with
+  | Some (Block block_items) ->
+      (* Use the tacky_instructions queue to accumulate instructions as we go *)
+      let body_instructions =
+        List.concat_map emit_tacky_for_block_item block_items
+      in
+      let extra_return = T.(Return (Constant 0)) in
+      Some
+        (T.Function
+           { name; params; body = body_instructions @ [ extra_return ] })
+  | None -> None
 
-let gen (Ast.Program fn_def) = T.Program (emit_tacky_for_function fn_def)
+let gen (Ast.Program fn_defs) =
+  let tacky_fn_defs = List.filter_map emit_fun_declaration fn_defs in
+  Tacky.Program tacky_fn_defs
