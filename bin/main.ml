@@ -37,10 +37,15 @@ let compile target stage preprocessed_src =
   run_command cleanup_preprocessed;
   replace_extension preprocessed_src ".s"
 
-let assemble_and_link src =
+let assemble_and_link ?(link = true) src =
+  let link_option = if link then "" else "-c" in
   let assembly_file = replace_extension src ".s" in
-  let output_file = Filename.chop_extension src in
-  let assemble_cmd = Printf.sprintf "gcc %s -o %s" assembly_file output_file in
+  let output_file =
+    if link then Filename.chop_extension src else replace_extension src ".o"
+  in
+  let assemble_cmd =
+    Printf.sprintf "gcc %s %s -o %s" link_option assembly_file output_file
+  in
   let _ = run_command assemble_cmd in
   (* cleanup .i and .s files *)
   let cleanup_cmd = Printf.sprintf "rm %s" assembly_file in
@@ -49,7 +54,10 @@ let assemble_and_link src =
 let driver target stage src =
   let preprocessed_name = preprocess src in
   let assembly_name = compile target stage preprocessed_name in
-  if stage = Settings.Executable then assemble_and_link assembly_name else ()
+  match stage with
+  | Settings.Executable -> assemble_and_link ~link:true assembly_name
+  | Settings.Obj -> assemble_and_link ~link:false assembly_name
+  | _ -> ()
 
 (* Command-line options *)
 let stage =
@@ -73,9 +81,13 @@ let stage =
     let doc = "Run through code generation but stop before emitting assembly" in
     (Settings.Codegen, Arg.info [ "codegen" ] ~doc)
   in
-
+  let obj =
+    let doc = "Stop before invoking linker (keep .o file)" in
+    (Settings.Obj, Arg.info [ "c" ] ~doc)
+  in
   Arg.(
-    value & vflag Settings.Executable [ lex; parse; validate; tacky; codegen ])
+    value
+    & vflag Settings.Executable [ lex; parse; validate; tacky; obj; codegen ])
 
 let target =
   let doc = "Choose target platform" in
