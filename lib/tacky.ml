@@ -37,10 +37,11 @@ type instruction =
   | JumpIfZero of tacky_val * string
   | JumpIfNotZero of tacky_val * string
   | Label of string
+  | FunCall of { f : string; args : tacky_val list; dst : tacky_val }
 [@@deriving show]
 
 type function_definition =
-  | Function of { name : string; body : instruction list }
+  | Function of { name : string; params : string list; body : instruction list }
 [@@deriving show]
 
-type t = Program of function_definition [@@deriving show]
+type t = Program of function_definition list [@@deriving show]

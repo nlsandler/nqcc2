@@ -9,19 +9,23 @@
   collect_switch_cases
   compile
   emit
+  identifier_resolution
   instruction_fixup
   label_loops
   lex
   parse
   replace_pseudos
+  rounding
+  symbols
   tacky
   tacky_gen
   tacky_print
   tokens
+  typecheck
+  types
   settings
   unique_ids
-  validate_labels
-  var_resolution)
+  validate_labels)
  (libraries batteries ppx_deriving ppx_inline_test camlp-streams)
  (preprocess
   (pps ppx_deriving.show))

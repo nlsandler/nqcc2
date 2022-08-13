@@ -106,8 +106,12 @@ and analyze_block opt_case_map (Block b) =
   in
   (new_opt_case_map, Block new_block_items)
 
-let analyze_function_def (Function { name; body }) =
-  let _, blk = analyze_block None body in
-  Function { name; body = blk }
+let analyze_function_def fun_decl =
+  match fun_decl.body with
+  | Some b ->
+      let _, blk = analyze_block None b in
+      { fun_decl with body = Some blk }
+  | None -> fun_decl
 
-let analyze_switches (Program fun_def) = Program (analyze_function_def fun_def)
+let analyze_switches (Program fun_defs) =
+  Program (List.map analyze_function_def fun_defs)

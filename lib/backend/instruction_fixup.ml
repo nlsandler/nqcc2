@@ -1,3 +1,4 @@
+open Batteries
 open Assembly
 
 let fixup_instruction = function
@@ -28,14 +29,16 @@ let fixup_instruction = function
   | Cmp (src, Imm i) -> [ Mov (Imm i, Reg R11); Cmp (src, Reg R11) ]
   | other -> [ other ]
 
-let fixup_function last_stack_slot (Function { name; instructions }) =
+let fixup_function (Function { name; instructions }) =
+  let stack_bytes = -(Symbols.get name).stack_frame_size in
   Function
     {
       name;
       instructions =
-        AllocateStack (-last_stack_slot)
+        AllocateStack (Rounding.round_away_from_zero 16 stack_bytes)
         :: List.concat_map fixup_instruction instructions;
     }
 
-let fixup_program last_stack_slot (Program fn_def) =
-  Program (fixup_function last_stack_slot fn_def)
+let fixup_program (Program fn_defs) =
+  let fixed_functions = List.map fixup_function fn_defs in
+  Program fixed_functions

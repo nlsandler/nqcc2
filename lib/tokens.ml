@@ -60,4 +60,5 @@ type t =
   | DoubleRightBracketEqual (* >>= *)
   | QuestionMark
   | Colon
+  | Comma
 [@@deriving show]

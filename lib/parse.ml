@@ -33,13 +33,6 @@ let expect expected tokens =
   if actual <> expected then raise_error ~expected:(Tok expected) ~actual
   else ()
 
-let expect_empty tokens =
-  try Stream.empty tokens
-  with Stream.Failure ->
-    (* Stream.empty raises this error if stream isn't empty *)
-    let bad_token = Stream.next tokens in
-    raise_error ~expected:(Name "end of file") ~actual:bad_token
-
 (* return Some prec if token represents a binary operator, None otherwise*)
 let get_precedence = function
   | T.Star | T.Slash | T.Percent -> Some 50
@@ -136,14 +129,21 @@ let parse_binop tokens =
       raise (ParseError "Internal error when parsing binary operator")
       [@coverage off]
 
-(* <primary-exp> ::= <int> | <identifier>  | "(" <exp> ")" *)
+(* <primary-exp> ::= <int> | <identifier> | <identifier> "(" [ <argument-list> ] ")" | "(" <exp> ")" *)
 let rec parse_primary_expression tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
   | T.Constant _ -> parse_constant tokens
   (* identifier *)
-  | T.Identifier _ -> Var (parse_id tokens)
+  | T.Identifier _ -> (
+      let id = parse_id tokens in
+      (* look at next token to figure out whether this is a variable or function call *)
+      match peek tokens with
+      | T.OpenParen ->
+          let args = parse_optional_arg_list tokens in
+          FunCall { f = id; args }
+      | _ -> Var id)
   (* parenthesized expression *)
   | T.OpenParen ->
       (* Stream.junk consumes open paren *)
@@ -181,6 +181,24 @@ and parse_factor tokens =
       let inner_exp = parse_factor tokens in
       Unary (operator, inner_exp)
   | _ -> parse_postfix_exp tokens
+
+(* "(" [ <argument-list> ] ")" ]*)
+and parse_optional_arg_list tokens =
+  expect OpenParen tokens;
+  let args =
+    match peek tokens with T.CloseParen -> [] | _ -> parse_arg_list tokens
+  in
+  expect T.CloseParen tokens;
+  args
+
+(* <argument-list> ::= <exp> { "," <exp> } *)
+and parse_arg_list tokens =
+  let arg = parse_expression 0 tokens in
+  match peek tokens with
+  | T.Comma ->
+      Stream.junk tokens;
+      arg :: parse_arg_list tokens
+  | _ -> [ arg ]
 
 (* "?" <exp> ":" *)
 and parse_conditional_middle tokens =
@@ -231,27 +249,6 @@ let parse_optional_expression delim tokens =
     let e = parse_expression 0 tokens in
     expect delim tokens;
     Some e
-
-(* <declaration> ::= "int" <identifier> [ "=" <exp> ] ";" *)
-let parse_declaration tokens =
-  let _ = expect T.KWInt tokens in
-  let var_name = parse_id tokens in
-  match Stream.next tokens with
-  | T.Semicolon -> Declaration { name = var_name; init = None }
-  | T.EqualSign ->
-      let init = parse_expression 0 tokens in
-      expect T.Semicolon tokens;
-      Declaration { name = var_name; init = Some init }
-  | other ->
-      raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
-
-(* <for-init> ::= <declaration> | [ <exp> ] ";" *)
-let parse_for_init tokens =
-  match peek tokens with
-  | T.KWInt -> InitDecl (parse_declaration tokens)
-  | _ ->
-      let opt_e = parse_optional_expression T.Semicolon tokens in
-      InitExp opt_e
 
 (* <statement> ::= "return" <exp> ";"
                  | <exp> ";"
@@ -391,23 +388,100 @@ and parse_block tokens =
   expect T.CloseBrace tokens;
   Block block_items
 
-(* <function> ::= "int" <identifier> "(" ")" <block> *)
-let parse_function_definition tokens =
-  let _ = expect KWInt tokens in
-  let fun_name = parse_id tokens in
-  let _ =
-    expect T.OpenParen tokens;
-    expect T.KWVoid tokens;
-    expect T.CloseParen tokens
+(*
+   <function-declaration> ::= "int" <identifier> "(" "void" | <param-list> ")" ( <block> | ";")
+   we've already parsed "int" <identifier>
+*)
+and finish_parsing_function_declaration name tokens =
+  expect T.OpenParen tokens;
+  let params =
+    match peek tokens with
+    | T.KWVoid ->
+        Stream.junk tokens;
+        []
+    | _ -> parse_param_list tokens
   in
-  let body = parse_block tokens in
-  Function { name = fun_name; body }
+  expect T.CloseParen tokens;
+  let body =
+    match peek tokens with
+    | T.OpenBrace -> Some (parse_block tokens)
+    | T.Semicolon ->
+        Stream.junk tokens;
+        None
+    | other ->
+        raise_error ~expected:(Name "function body or semicolon") ~actual:other
+  in
+  { name; params; body }
 
-(* <program> ::= <function> *)
+(* <param-list> ::= "int" <identifier> { "," "int" <identifier> } *)
+and parse_param_list tokens =
+  expect KWInt tokens;
+  let next_param = parse_id tokens in
+  match peek tokens with
+  | T.Comma ->
+      (* parse the rest of the param list *)
+      Stream.junk tokens;
+      next_param :: parse_param_list tokens
+  | _ -> [ next_param ]
+
+(* <variable-declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
+   we've already parsed "int" <identifer> *)
+and finish_parsing_variable_declaration name tokens =
+  match Stream.next tokens with
+  | T.Semicolon -> { name; init = None }
+  | T.EqualSign ->
+      let init = parse_expression 0 tokens in
+      expect T.Semicolon tokens;
+      { name; init = Some init }
+  | other ->
+      raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
+
+(* <declaration> ::= <variable-declaration> | <function-declaration>
+   parse "int" <identifier>, then call appropriate function to finish parsing
+*)
+and parse_declaration tokens =
+  let _ = expect KWInt tokens in
+  let name = parse_id tokens in
+  match peek tokens with
+  | T.OpenParen -> FunDecl (finish_parsing_function_declaration name tokens)
+  | _ -> VarDecl (finish_parsing_variable_declaration name tokens)
+
+(* helper function to accept variable declarations and reject function declarations *)
+and parse_variable_declaration tokens =
+  match parse_declaration tokens with
+  | VarDecl vd -> vd
+  | FunDecl _ ->
+      raise
+        (ParseError
+           "Expected variable declaration but found function declaration")
+
+(* <for-init> ::= <declaration> | [ <exp> ] ";" *)
+and parse_for_init tokens =
+  match peek tokens with
+  | T.KWInt -> InitDecl (parse_variable_declaration tokens)
+  | _ ->
+      let opt_e = parse_optional_expression T.Semicolon tokens in
+      InitExp opt_e
+
+(* { <function-declaration> } *)
+let rec parse_function_declaration_list tokens =
+  match Stream.peek tokens with
+  | None -> (* we've reached the end of the input *) []
+  | Some _ ->
+      let next_fun =
+        match parse_declaration tokens with
+        | FunDecl fd -> fd
+        | VarDecl _ ->
+            failwith
+              "expected function declaration at top level but found variable \
+               declaration "
+      in
+      next_fun :: parse_function_declaration_list tokens
+
+(* <program> ::= { <function-declaration> } *)
 let parse tokens =
   try
     let token_stream = Stream.of_list tokens in
-    let fun_def = parse_function_definition token_stream in
-    let _ = expect_empty token_stream in
-    Program fun_def
+    let functions = parse_function_declaration_list token_stream in
+    Program functions
   with Stream.Failure -> raise (ParseError "Unexpected end of file")

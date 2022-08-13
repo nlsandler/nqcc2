@@ -1,4 +1,4 @@
-type stage = Lex | Parse | Validate | Tacky | Codegen | Assembly | Executable
+type stage = Lex | Parse | Validate | Tacky | Codegen | Assembly | Obj | Executable
 type target = OS_X | Linux
 type extra_credit = Bitwise | Compound | Increment | Goto | Switch
 val platform : target ref

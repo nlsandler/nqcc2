@@ -1,4 +1,13 @@
-type stage = Lex | Parse | Validate | Tacky | Codegen | Assembly | Executable
+type stage =
+  | Lex
+  | Parse
+  | Validate
+  | Tacky
+  | Codegen
+  | Assembly
+  | Obj
+  | Executable
+
 type target = OS_X | Linux
 
 (* Control which extra-credit features are enabled (to test the test suite) *)

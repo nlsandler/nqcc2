@@ -1,5 +1,7 @@
 open Tacky
 
+let comma_sep out () = Format.fprintf out ", "
+
 let pp_unary_operator out = function
   | Complement -> Format.pp_print_string out "~"
   | Negate -> Format.pp_print_string out "-"
@@ -45,19 +47,33 @@ let pp_instruction out = function
   | Label s ->
       Format.pp_print_break out 0 (-2);
       Format.fprintf out "%s:" s
+  | FunCall { f; args; dst } ->
+      Format.fprintf out "%a = %s(%a)" pp_tacky_val dst f
+        Format.(pp_print_list ~pp_sep:comma_sep pp_tacky_val)
+        args
 
-let pp_function_definition out (Function { name; body }) =
+let pp_function_definition out (Function { name; params; body }) =
   (* Format.pp_set_margin out 40; *)
   Format.pp_open_vbox out 0;
-  Format.fprintf out "%s:" name;
+  Format.fprintf out "%s(%a):" name
+    Format.(pp_print_list ~pp_sep:comma_sep pp_print_string)
+    params;
   Format.pp_print_break out 0 4;
   Format.pp_open_vbox out 0;
-  Format.(pp_print_list pp_instruction) out body;
+  Format.pp_print_list pp_instruction out body;
   Format.pp_close_box out ();
+  Format.pp_close_box out ()
+
+let pp_program out (Program fs) =
+  Format.pp_open_vbox out 0;
+  Format.pp_print_list
+    ~pp_sep:(fun out () ->
+      (* print _two_ newlines b/t functions *)
+      Format.pp_print_cut out ();
+      Format.pp_print_cut out ())
+    pp_function_definition out fs;
   Format.pp_close_box out ();
   Format.pp_print_newline out () (* flush *)
-
-let pp_program out (Program f) = pp_function_definition out f
 
 let debug_print_tacky src_filename tacky_prog =
   if !Settings.debug then (

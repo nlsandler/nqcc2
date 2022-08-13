@@ -70,7 +70,8 @@ and label_block_item current_ids = function
 and label_block current_ids (Block b) =
   Block (List.map (label_block_item current_ids) b)
 
-let label_function_def (Function { name; body }) =
-  Function { name; body = label_block (None, None) body }
+let label_function_def fn =
+  { fn with body = Option.map (label_block (None, None)) fn.body }
 
-let label_loops (Program fn_def) = Program (label_function_def fn_def)
+let label_loops (Program fn_defs) =
+  Program (List.map label_function_def fn_defs)
