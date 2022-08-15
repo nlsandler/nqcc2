@@ -15,6 +15,8 @@ type t =
   | KWFor
   | KWBreak
   | KWContinue
+  | KWStatic
+  | KWExtern
   (* punctuation *)
   | OpenParen
   | CloseParen
