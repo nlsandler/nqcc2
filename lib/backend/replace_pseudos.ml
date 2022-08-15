@@ -9,7 +9,7 @@ type replacement_state = {
 let replace_operand state = function
   (* if it's a pseudoregister, replace it with a stack slot *)
   | Pseudo s -> (
-      if Symbols.is_static s then (state, Data s)
+      if Assembly_symbols.is_static s then (state, Data s)
       else
         match String_map.find_opt s state.offset_map with
         (* We've already assigned this operand a stack slot *)
@@ -17,7 +17,12 @@ let replace_operand state = function
         (* We haven't already assigned it a stack slot;
          * assign it and update state *)
         | None ->
-            let new_offset = state.current_offset - 4 in
+            let size = Assembly_symbols.get_size s in
+            let alignment = Assembly_symbols.get_alignment s in
+            let new_offset =
+              Rounding.round_away_from_zero alignment
+                (state.current_offset - size)
+            in
             let new_state =
               {
                 current_offset = new_offset;
@@ -30,29 +35,34 @@ let replace_operand state = function
 
 let replace_pseudos_in_instruction state = function
   (* Replace src and dst of mov instruction *)
-  | Mov (src, dst) ->
+  | Mov (t, src, dst) ->
       let state1, new_src = replace_operand state src in
       let state2, new_dst = replace_operand state1 dst in
-      let new_mov = Mov (new_src, new_dst) in
+      let new_mov = Mov (t, new_src, new_dst) in
       (state2, new_mov)
-      (* Replace dst of unary instruction *)
-  | Unary (op, dst) ->
-      let state1, new_dst = replace_operand state dst in
-      let new_unary = Unary (op, new_dst) in
-      (state1, new_unary)
-  | Binary { op; src; dst } ->
+  | Movsx (src, dst) ->
       let state1, new_src = replace_operand state src in
       let state2, new_dst = replace_operand state1 dst in
-      let new_binary = Binary { op; src = new_src; dst = new_dst } in
+      let new_movsx = Movsx (new_src, new_dst) in
+      (state2, new_movsx)
+      (* Replace dst of unary instruction *)
+  | Unary (t, op, dst) ->
+      let state1, new_dst = replace_operand state dst in
+      let new_unary = Unary (t, op, new_dst) in
+      (state1, new_unary)
+  | Binary { op; t; src; dst } ->
+      let state1, new_src = replace_operand state src in
+      let state2, new_dst = replace_operand state1 dst in
+      let new_binary = Binary { op; t; src = new_src; dst = new_dst } in
       (state2, new_binary)
-  | Cmp (op1, op2) ->
+  | Cmp (t, op1, op2) ->
       let state1, new_op1 = replace_operand state op1 in
       let state2, new_op2 = replace_operand state1 op2 in
-      let new_cmp = Cmp (new_op1, new_op2) in
+      let new_cmp = Cmp (t, new_op1, new_op2) in
       (state2, new_cmp)
-  | Idiv op ->
+  | Idiv (t, op) ->
       let state1, new_op = replace_operand state op in
-      (state1, Idiv new_op)
+      (state1, Idiv (t, new_op))
   (* Ret instruction has no operands, doesn't need to be rewritten *)
   | SetCC (code, op) ->
       let state1, new_op = replace_operand state op in
@@ -60,9 +70,7 @@ let replace_pseudos_in_instruction state = function
   | Push op ->
       let state1, new_op = replace_operand state op in
       (state1, Push new_op)
-  | ( Ret | Cdq | Label _ | JmpCC _ | Jmp _ | DeallocateStack _ | Call _
-    | AllocateStack _ ) as other ->
-      (state, other)
+  | (Ret | Cdq _ | Label _ | JmpCC _ | Jmp _ | Call _) as other -> (state, other)
 
 let replace_pseudos_in_tl = function
   | Function { name; global; instructions } ->
@@ -72,7 +80,7 @@ let replace_pseudos_in_tl = function
         List.fold_left_map replace_pseudos_in_instruction init_state
           instructions
       in
-      Symbols.set_bytes_required name final_state.current_offset;
+      Assembly_symbols.set_bytes_required name final_state.current_offset;
       Function { name; global; instructions = fixed_instructions }
   | static_var -> static_var
 

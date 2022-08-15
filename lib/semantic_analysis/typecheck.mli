@@ -1,1 +1,1 @@
-val typecheck : Ast.t -> unit
+val typecheck : Ast.Untyped.t -> Ast.Typed.t

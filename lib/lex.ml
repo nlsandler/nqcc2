@@ -2,7 +2,8 @@ open Tokens
 
 (* regular expressions for tokens *)
 let id_regexp = Str.regexp {|[A-Za-z_][A-Za-z0-9_]*\b|}
-let const_regexp = Str.regexp {|[0-9]+\b|}
+let int_regexp = Str.regexp {|[0-9]+\b|}
+let long_regexp = Str.regexp {|[0-9]+[lL]\b|}
 
 let id_to_tok = function
   | "int" -> KWInt
@@ -17,6 +18,7 @@ let id_to_tok = function
   | "continue" -> KWContinue
   | "static" -> KWStatic
   | "extern" -> KWExtern
+  | "long" -> KWLong
   | other -> Identifier other
 
 (* whitespace characters: space, tab, newline, vertical tab, form feed *)
@@ -65,16 +67,27 @@ let rec lex_helper chars =
     | _ -> lex_identifier chars
 
 and lex_constant input =
-  if Str.string_match const_regexp input 0 then
-    (* extract the portion of the string that matched the input, and convert it to a Constant token *)
-    let const_str = Str.matched_string input in
-    let tok = Constant (int_of_string const_str) in
-    (* remaining is the rest of the input after the substring that matched the regex *)
-    let remaining = Str.string_after input (Str.match_end ()) in
-    tok :: lex_helper remaining
-  else
-    failwith
-      ("Lexer failure: input starts with a digit but isn't a constant: " ^ input)
+  let tok =
+    if Str.string_match long_regexp input 0 then
+      (* extract the portion of the string that matched the input, except the l suffix, and convert it to a Constant token *)
+      let const_str_with_suffix = Str.matched_string input in
+      let const_str =
+        String.sub const_str_with_suffix 0
+          (String.length const_str_with_suffix - 1)
+      in
+      ConstLong (Z.of_string const_str)
+    else if Str.string_match int_regexp input 0 then
+      (* extract the portion of the string that matched the input, and convert it to a Constant token *)
+      let const_str = Str.matched_string input in
+      ConstInt (Z.of_string const_str)
+    else
+      failwith
+        ("Lexer failure: input starts with a digit but isn't a constant: "
+        ^ input)
+  in
+  (* remaining is the rest of the input after the substring that matched the regex *)
+  let remaining = Str.string_after input (Str.match_end ()) in
+  tok :: lex_helper remaining
 
 and lex_identifier input =
   if Str.string_match id_regexp input 0 then

@@ -3,9 +3,11 @@
 type t =
   (* tokens with contents *)
   | Identifier of string
-  | Constant of int
+  | ConstInt of (Z.t[@equal Z.equal] [@printer Z.pp_print])
+  | ConstLong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   (* Keywords *)
   | KWInt
+  | KWLong
   | KWReturn
   | KWVoid
   | KWIf

@@ -2,7 +2,9 @@ module T = struct
   include Tokens
 end
 
-open Ast
+module Ast = struct
+  include Ast.Untyped
+end
 
 (* exceptions *)
 exception ParseError of string
@@ -47,31 +49,42 @@ let get_precedence = function
 
 (* getting a list of specifiers *)
 
+let rec parse_type_specifer_list tokens =
+  match peek tokens with
+  | T.KWInt | T.KWLong ->
+      let spec = Stream.next tokens in
+      spec :: parse_type_specifer_list tokens
+  | _ -> []
+
 let rec parse_specifier_list tokens =
   match peek tokens with
-  | T.KWInt | KWStatic | KWExtern ->
+  | T.KWInt | KWLong | KWStatic | KWExtern ->
       let spec = Stream.next tokens in
       spec :: parse_specifier_list tokens
   | _ -> []
 
 let parse_storage_class = function
-  | T.KWExtern -> Extern
+  | T.KWExtern -> Ast.Extern
   | KWStatic -> Static
   | _ -> failwith "Internal error: bad storage class" [@coverage off]
 
+let parse_type = function
+  | [ T.KWInt ] -> Types.Int
+  | [ KWInt; KWLong ] | [ KWLong; KWInt ] | [ KWLong ] -> Long
+  | _ -> failwith "Invalid type specifier"
+
 let parse_type_and_storage_class specifier_list =
   let types, storage_classes =
-    List.partition (fun tok -> tok = T.KWInt) specifier_list
+    List.partition (fun tok -> tok = T.KWInt || tok = KWLong) specifier_list
   in
-  if List.length types <> 1 then failwith "Invalid type specifier"
-  else
-    let storage_class =
-      match storage_classes with
-      | [] -> None
-      | [ sc ] -> Some (parse_storage_class sc)
-      | _ :: _ -> failwith "Invalid storage class"
-    in
-    (Types.Int, storage_class)
+  let typ = parse_type types in
+  let storage_class =
+    match storage_classes with
+    | [] -> None
+    | [ sc ] -> Some (parse_storage_class sc)
+    | _ :: _ -> failwith "Invalid storage class"
+  in
+  (typ, storage_class)
 
 (* parsing grammar symbols *)
 
@@ -83,16 +96,24 @@ let parse_id tokens =
 
 (* <int> ::= ? A constant token ? *)
 let parse_constant tokens =
-  match Stream.next tokens with
-  | T.Constant c -> Constant c
-  (* we only call this when we know the next token is a constant *)
-  | _ ->
-      raise (ParseError "Internal error when parsing constant") [@coverage off]
+  try
+    match Stream.next tokens with
+    | T.ConstInt c -> (
+        try Const.ConstInt (Z.to_int32 c)
+        with Z.Overflow -> ConstLong (Z.to_int64 c))
+    | T.ConstLong c -> ConstLong (Z.to_int64 c)
+    (* we only call this when we know the next token is a constant *)
+    | _ ->
+        raise (ParseError "Internal error when parsing constant")
+        [@coverage off]
+  with Failure _ ->
+    (* int64_of_big_int raises failure when value is out of bounds *)
+    raise (ParseError "Constant is too large to fit in an int or long")
 
 (* <unop> ::= "-" | "~" *)
 let parse_unop tokens =
   match Stream.next tokens with
-  | T.Tilde -> Complement
+  | T.Tilde -> Ast.Complement
   | T.Hyphen -> Negate
   | T.Bang -> Not
   (* we only call this when we know the next token is a unop *)
@@ -103,7 +124,7 @@ let parse_unop tokens =
 (* <binop> ::= "-" | "+" | "*" | "/" | "%" *)
 let parse_binop tokens =
   match Stream.next tokens with
-  | T.Plus -> Add
+  | T.Plus -> Ast.Add
   | T.Hyphen -> Subtract
   | T.Star -> Multiply
   | T.Slash -> Divide
@@ -125,7 +146,7 @@ let rec parse_factor tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
-  | T.Constant _ -> parse_constant tokens
+  | T.ConstInt _ | T.ConstLong _ -> Ast.Constant (parse_constant tokens)
   (* identifier *)
   | T.Identifier _ -> (
       let id = parse_id tokens in
@@ -141,12 +162,22 @@ let rec parse_factor tokens =
       let inner_exp = parse_factor tokens in
       Unary (operator, inner_exp)
   (* parenthesized expression *)
-  | T.OpenParen ->
+  | T.OpenParen -> (
+      (* this is either a cast or a parenthesized expression *)
       (* Stream.junk consumes open paren *)
       let _ = Stream.junk tokens in
-      let e = parse_expression 0 tokens in
-      let _ = expect T.CloseParen tokens in
-      e
+      match peek tokens with
+      | KWInt | KWLong ->
+          (* it's a cast*)
+          let type_specifiers = parse_type_specifer_list tokens in
+          let target_type = parse_type type_specifiers in
+          expect T.CloseParen tokens;
+          let inner_exp = parse_factor tokens in
+          Cast { target_type; e = inner_exp }
+      | _ ->
+          let e = parse_expression 0 tokens in
+          let _ = expect T.CloseParen tokens in
+          e)
   (* errors *)
   | t -> raise_error ~expected:(Name "a factor") ~actual:t
 
@@ -186,20 +217,20 @@ and parse_expression min_prec tokens =
         | T.EqualSign ->
             let _ = Stream.junk tokens in
             let right = parse_expression prec tokens in
-            let left = Assignment (left, right) in
+            let left = Ast.Assignment (left, right) in
             parse_exp_loop left (peek tokens)
         | T.QuestionMark ->
             let middle = parse_conditional_middle tokens in
             let right = parse_expression prec tokens in
             let left =
-              Conditional
+              Ast.Conditional
                 { condition = left; then_result = middle; else_result = right }
             in
             parse_exp_loop left (peek tokens)
         | _ ->
             let operator = parse_binop tokens in
             let right = parse_expression (prec + 1) tokens in
-            let left = Binary (operator, left, right) in
+            let left = Ast.Binary (operator, left, right) in
             parse_exp_loop left (peek tokens))
     | _ -> left
   in
@@ -229,7 +260,7 @@ let parse_optional_expression delim tokens =
 let rec parse_statement tokens =
   match peek tokens with
   | T.KWIf -> parse_if_statement tokens
-  | T.OpenBrace -> Compound (parse_block tokens)
+  | T.OpenBrace -> Ast.Compound (parse_block tokens)
   | T.KWDo -> parse_do_loop tokens
   | T.KWWhile -> parse_while_loop tokens
   | T.KWFor -> parse_for_loop tokens
@@ -301,7 +332,7 @@ and parse_for_loop tokens =
 (* <block-item> ::= <statement> | <declaration> *)
 and parse_block_item tokens =
   match peek tokens with
-  | T.(KWInt | KWStatic | KWExtern) -> D (parse_declaration tokens)
+  | T.(KWInt | KWLong | KWStatic | KWExtern) -> Ast.D (parse_declaration tokens)
   | _ -> S (parse_statement tokens)
 
 (* helper function to parse list of block items, stopping when we hit a close brace *)
@@ -323,15 +354,16 @@ and parse_block tokens =
    <function-declaration> ::= "int" <identifier> "(" "void" | <param-list> ")" ( <block> | ";")
    we've already parsed "int" <identifier>
 *)
-and finish_parsing_function_declaration storage_class name tokens =
+and finish_parsing_function_declaration ret_type storage_class name tokens =
   expect T.OpenParen tokens;
-  let params =
+  let params_with_types =
     match peek tokens with
     | T.KWVoid ->
         Stream.junk tokens;
         []
     | _ -> parse_param_list tokens
   in
+  let param_types, params = List.split params_with_types in
   expect T.CloseParen tokens;
   let body =
     match peek tokens with
@@ -342,28 +374,30 @@ and finish_parsing_function_declaration storage_class name tokens =
     | other ->
         raise_error ~expected:(Name "function body or semicolon") ~actual:other
   in
-  { name; storage_class; params; body }
+  let fun_type = Types.FunType { param_types; ret_type } in
+  Ast.{ name; fun_type; storage_class; params; body }
 
 (* <param-list> ::= "int" <identifier> { "," "int" <identifier> } *)
 and parse_param_list tokens =
-  expect KWInt tokens;
+  let specifiers = parse_type_specifer_list tokens in
+  let param_type = parse_type specifiers in
   let next_param = parse_id tokens in
   match peek tokens with
   | T.Comma ->
       (* parse the rest of the param list *)
       Stream.junk tokens;
-      next_param :: parse_param_list tokens
-  | _ -> [ next_param ]
+      (param_type, next_param) :: parse_param_list tokens
+  | _ -> [ (param_type, next_param) ]
 
 (* <variable-declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
    we've already parsed "int" <identifer> *)
-and finish_parsing_variable_declaration storage_class name tokens =
+and finish_parsing_variable_declaration var_type storage_class name tokens =
   match Stream.next tokens with
-  | T.Semicolon -> { name; storage_class; init = None }
+  | T.Semicolon -> Ast.{ name; var_type; storage_class; init = None }
   | T.EqualSign ->
       let init = parse_expression 0 tokens in
       expect T.Semicolon tokens;
-      { name; storage_class; init = Some init }
+      { name; var_type; storage_class; init = Some init }
   | other ->
       raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
@@ -372,12 +406,15 @@ and finish_parsing_variable_declaration storage_class name tokens =
 *)
 and parse_declaration tokens =
   let specifiers = parse_specifier_list tokens in
-  let _typ, storage_class = parse_type_and_storage_class specifiers in
+  let typ, storage_class = parse_type_and_storage_class specifiers in
   let name = parse_id tokens in
   match peek tokens with
   | T.OpenParen ->
-      FunDecl (finish_parsing_function_declaration storage_class name tokens)
-  | _ -> VarDecl (finish_parsing_variable_declaration storage_class name tokens)
+      FunDecl
+        (finish_parsing_function_declaration typ storage_class name tokens)
+  | _ ->
+      VarDecl
+        (finish_parsing_variable_declaration typ storage_class name tokens)
 
 (* helper function to accept variable declarations and reject function declarations *)
 and parse_variable_declaration tokens =
@@ -392,7 +429,7 @@ and parse_variable_declaration tokens =
 and parse_for_init tokens =
   match peek tokens with
   (* note that a static or extern keyword here is invalid, but we'll catch that in semantic analysis *)
-  | T.(KWInt | KWStatic | KWExtern) ->
+  | T.(KWInt | KWLong | KWStatic | KWExtern) ->
       InitDecl (parse_variable_declaration tokens)
   | _ ->
       let opt_e = parse_optional_expression T.Semicolon tokens in
@@ -412,5 +449,5 @@ let parse tokens =
   try
     let token_stream = Stream.of_list tokens in
     let declarations = parse_declaration_list token_stream in
-    Program declarations
+    Ast.Program declarations
   with Stream.Failure -> raise (ParseError "Unexpected end of file")
