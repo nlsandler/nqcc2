@@ -22,12 +22,11 @@ let compile stage src_file =
 
       (* 3. annotate loops and break/continue statements *)
       let validated_ast2 = Label_loops.label_loops validated_ast in
-      (* 4. Collect cases in switch statements *)
-      let validated_ast3 =
-        Collect_switch_cases.analyze_switches validated_ast2
-      in
-      (* 5. typecheck definitions and uses of functions adn variables *)
-      let _ = Typecheck.typecheck validated_ast3 in
+
+      (* 4. typecheck definitions and uses of functions and variables *)
+      let typed_ast = Typecheck.typecheck validated_ast2 in
+      (* 5. Collect cases in switch statements (need to type check first) *)
+      let validated_ast3 = Collect_switch_cases.analyze_switches typed_ast in
       if stage = Settings.Validate then ()
       else
         (* Convert the AST to TACKY *)

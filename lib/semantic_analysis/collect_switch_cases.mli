@@ -1,1 +1,1 @@
-val analyze_switches : Ast.t -> Ast.t
+val analyze_switches : Ast.Typed.t -> Ast.Typed.t

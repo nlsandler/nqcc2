@@ -21,10 +21,12 @@ type binary_operator =
   | GreaterOrEqual
 [@@deriving show]
 
-type tacky_val = Constant of int | Var of string [@@deriving show]
+type tacky_val = Constant of Const.t | Var of string [@@deriving show]
 
 type instruction =
   | Return of tacky_val
+  | SignExtend of { src : tacky_val; dst : tacky_val }
+  | Truncate of { src : tacky_val; dst : tacky_val }
   | Unary of { op : unary_operator; src : tacky_val; dst : tacky_val }
   | Binary of {
       op : binary_operator;
@@ -47,7 +49,12 @@ type top_level =
       params : string list;
       body : instruction list;
     }
-  | StaticVariable of { name : string; global : bool; init : int }
+  | StaticVariable of {
+      name : string;
+      t : Types.t;
+      global : bool;
+      init : Initializers.static_init;
+    }
 [@@deriving show]
 
 type t = Program of top_level list [@@deriving show]

@@ -1,7 +1,7 @@
-type reg = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11
+type reg = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP
 
 type operand =
-  | Imm of int
+  | Imm of int64
   | Reg of reg
   | Pseudo of string
   | Stack of int
@@ -10,20 +10,25 @@ type operand =
 type unary_operator = Neg | Not
 type binary_operator = Add | Sub | Mult | And | Or | Xor | Sal | Sar
 type cond_code = E | NE | G | GE | L | LE
+type asm_type = Longword | Quadword
 
 type instruction =
-  | Mov of operand * operand
-  | Unary of unary_operator * operand
-  | Binary of { op : binary_operator; src : operand; dst : operand }
-  | Cmp of operand * operand
-  | Idiv of operand
-  | Cdq
+  | Mov of asm_type * operand * operand
+  | Movsx of operand * operand
+  | Unary of unary_operator * asm_type * operand
+  | Binary of {
+      op : binary_operator;
+      t : asm_type;
+      src : operand;
+      dst : operand;
+    }
+  | Cmp of asm_type * operand * operand
+  | Idiv of asm_type * operand
+  | Cdq of asm_type
   | Jmp of string
   | JmpCC of cond_code * string
   | SetCC of cond_code * operand
   | Label of string
-  | AllocateStack of int
-  | DeallocateStack of int
   | Push of operand
   | Call of string
   | Ret
@@ -34,6 +39,11 @@ type top_level =
       global : bool;
       instructions : instruction list;
     }
-  | StaticVariable of { name : string; global : bool; init : int }
+  | StaticVariable of {
+      name : string;
+      alignment : int;
+      global : bool;
+      init : Initializers.static_init;
+    }
 
 type t = Program of top_level list

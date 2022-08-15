@@ -1,5 +1,5 @@
 open Batteries
-open Ast
+open Ast.Untyped
 
 type var_entry = {
   unique_name : string;
@@ -52,7 +52,8 @@ let rec resolve_exp id_map = function
       (* rename var from map  *)
       try Var (Map.find v id_map).unique_name
       with Not_found -> failwith (Printf.sprintf "Undeclared variable %s" v))
-  (* recursively process operands for unary, binary, and conditional *)
+  (* recursively process operands for casts, unary, binary, conditional, function calls *)
+  | Cast { target_type; e } -> Cast { target_type; e = resolve_exp id_map e }
   | Unary (op, e) ->
       (* validate prefix ops*)
       (match (op, e) with
@@ -101,14 +102,16 @@ let resolve_local_var_helper id_map name storage_class =
   let new_map = Map.add name entry id_map in
   (new_map, entry.unique_name)
 
-let resolve_local_var_declaration id_map { name; init; storage_class } =
+let resolve_local_var_declaration id_map { name; var_type; init; storage_class }
+    =
   let new_map, unique_name =
     resolve_local_var_helper id_map name storage_class
   in
 
   let resolved_init = Option.map (resolve_exp new_map) init in
   (* return new map and resolved declaration *)
-  (new_map, { name = unique_name; init = resolved_init; storage_class })
+  ( new_map,
+    { name = unique_name; var_type; init = resolved_init; storage_class } )
 
 let resolve_for_init id_map = function
   | InitExp e -> (id_map, InitExp (resolve_optional_exp id_map e))
@@ -218,7 +221,7 @@ and resolve_function_declaration id_map fn =
       (new_map, { fn with params = resolved_params; body = resolved_body })
 
 let resolve_file_scope_variable_declaration id_map
-    ({ name; _ } as vd : Ast.variable_declaration) =
+    ({ name; _ } as vd : exp variable_declaration) =
   let new_map =
     Map.add name
       { unique_name = name; from_current_scope = true; has_linkage = true }

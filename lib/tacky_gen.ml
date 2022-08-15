@@ -1,11 +1,29 @@
 open Batteries
 
+module Ast = struct
+  include Ast.Typed
+end
+
 module T = struct
   include Tacky
 end
 
 let break_label id = "break." ^ id
 let continue_label id = "continue." ^ id
+
+let create_tmp t =
+  let name = Unique_ids.make_temporary () in
+  Symbols.add_automatic_var name ~t;
+  name
+
+let mk_const t i =
+  match t with
+  | Types.Int -> Const.ConstInt (Int32.of_int i)
+  | Types.Long -> ConstLong (Int64.of_int i)
+  | Types.FunType _ ->
+      failwith "Internal error: can't make constant of fun type"
+
+let mk_ast_const t i = Ast.{ e = Constant (mk_const t i); t }
 
 let convert_op = function
   | Ast.Complement -> T.Complement
@@ -34,60 +52,84 @@ let convert_binop = function
       failwith "Internal error, cannot convert these directly to TACKY binops"
       [@coverage off]
 
-let emit_decr op v =
-  let dst = T.Var (Unique_ids.make_temporary ()) in
+let emit_decr op inner =
+  let v =
+    match inner.Ast.e with Var v -> v | _ -> failwith "Invalid lvalue"
+  in
+  let dst = T.Var (create_tmp inner.t) in
   let instrs =
     [
       T.Copy { src = Var v; dst };
       T.Binary
-        { op = convert_binop op; src1 = Var v; src2 = Constant 1; dst = Var v };
+        {
+          op = convert_binop op;
+          src1 = Var v;
+          src2 = Constant (mk_const inner.t 1);
+          dst = Var v;
+        };
     ]
   in
   (instrs, dst)
 
 (* return list of instructions to evaluate expression a and resulting TACKY value as a pair *)
-let rec emit_tacky_for_exp = function
+let rec emit_tacky_for_exp Ast.{ e; t } =
+  match e with
   (* don't need any instructions to calculate a constant or variable  *)
   | Ast.Constant c -> ([], T.Constant c)
   | Ast.Var v -> ([], T.Var v)
-  | Ast.Unary (Incr, Var v) ->
-      emit_compound_expression Ast.Add v (Ast.Constant 1)
-  | Ast.Unary (Decr, Var v) ->
-      emit_compound_expression Ast.Subtract v (Ast.Constant 1)
-  | Ast.Unary (op, inner) -> emit_unary_expression op inner
+  | Ast.Unary (Incr, v) ->
+      emit_compound_expression ~op:Ast.Add ~lhs:v ~rhs:(mk_ast_const t 1)
+        ~result_t:t
+  | Ast.Unary (Decr, v) ->
+      emit_compound_expression ~op:Ast.Subtract ~lhs:v ~rhs:(mk_ast_const t 1)
+        ~result_t:t
+  | Ast.Cast { target_type; e } -> emit_cast_expression target_type e
+  | Ast.Unary (op, inner) -> emit_unary_expression t op inner
   | Ast.Binary (And, e1, e2) -> emit_and_expression e1 e2
   | Ast.Binary (Or, e1, e2) -> emit_or_expression e1 e2
-  | Ast.Binary (op, e1, e2) -> emit_binary_expression op e1 e2
-  | Ast.Assignment (Var v, rhs) ->
-      let rhs_instructions, rhs_result = emit_tacky_for_exp rhs in
-      let instructions =
-        rhs_instructions @ [ T.Copy { src = rhs_result; dst = Var v } ]
-      in
-      (instructions, Var v)
-  | Ast.CompoundAssignment (op, Var v, rhs) -> emit_compound_expression op v rhs
-  | Ast.PostfixDecr (Var v) -> emit_decr Ast.Subtract v
-  | PostfixIncr (Var v) -> emit_decr Ast.Add v
+  | Ast.Binary (op, e1, e2) -> emit_binary_expression t op e1 e2
+  | Ast.Assignment ({ e = Var v; _ }, rhs) -> emit_assignment v rhs
+  | Ast.CompoundAssignment { op; lhs; rhs; result_t } ->
+      emit_compound_expression ~op ~lhs ~rhs ~result_t
+  | Ast.PostfixDecr v -> emit_decr Ast.Subtract v
+  | PostfixIncr v -> emit_decr Ast.Add v
   | Ast.Conditional { condition; then_result; else_result } ->
-      emit_conditional_expression condition then_result else_result
-  | Ast.FunCall { f; args } -> emit_fun_call f args
-  | Ast.Assignment _ | Ast.CompoundAssignment _ | Ast.PostfixDecr _
-  | Ast.PostfixIncr _ ->
-      failwith "Internal error: bad lvalue" [@coverage off]
+      emit_conditional_expression t condition then_result else_result
+  | Ast.FunCall { f; args } -> emit_fun_call t f args
+  | Ast.Assignment _ -> failwith "Internal error: bad lvalue" [@coverage off]
 
 (* helper functions for individual expression *)
-and emit_unary_expression op inner =
+and emit_unary_expression t op inner =
   let eval_inner, v = emit_tacky_for_exp inner in
   (* define a temporary variable to hold result of this expression *)
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let tacky_op = convert_op op in
   let instructions = eval_inner @ [ T.Unary { op = tacky_op; src = v; dst } ] in
   (instructions, dst)
 
-and emit_binary_expression op e1 e2 =
+and emit_cast_expression target_type inner =
+  let eval_inner, result = emit_tacky_for_exp inner in
+  let src_type = Type_utils.get_type inner in
+  if src_type = target_type then (eval_inner, result)
+  else
+    let dst_name = create_tmp target_type in
+    let dst = T.Var dst_name in
+    let cast_instruction = get_cast_instruction result dst target_type in
+    (eval_inner @ [ cast_instruction ], dst)
+
+and get_cast_instruction src dst dst_t =
+  (* NOTE: assumes src and dst have different types *)
+  match dst_t with
+  | Types.Long -> T.SignExtend { src; dst }
+  | Types.Int -> T.Truncate { src; dst }
+  | Types.FunType _ ->
+      failwith "Internal error: cast to function type" [@coverage off]
+
+and emit_binary_expression t op e1 e2 =
   let eval_v1, v1 = emit_tacky_for_exp e1 in
   let eval_v2, v2 = emit_tacky_for_exp e2 in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let tacky_op = convert_binop op in
   let instructions =
@@ -97,21 +139,44 @@ and emit_binary_expression op e1 e2 =
   in
   (instructions, dst)
 
-and emit_compound_expression op v rhs =
+and emit_compound_expression ~op ~lhs ~rhs ~result_t =
+  (* make sure it's an lvalue *)
+  let v =
+    match lhs.Ast.e with
+    | Var v -> v
+    | _ -> failwith "bad lvalue in compound assignment or prefix incr/decr"
+  in
+  (* evaluate RHS - type checker already added conversion to common type if one is needed *)
   let eval_rhs, rhs = emit_tacky_for_exp rhs in
   let dst = T.Var v in
   let tacky_op = convert_binop op in
-  let instructions =
-    eval_rhs @ [ T.Binary { op = tacky_op; src1 = dst; src2 = rhs; dst } ]
+  let operation_and_assignment =
+    if result_t = lhs.t then
+      (* result of binary operation already has correct destination type *)
+      [ T.Binary { op = tacky_op; src1 = dst; src2 = rhs; dst } ]
+    else
+      (* must convert LHS to op type, then convert result back, so we'll have
+       * tmp = <cast v to result_type>
+       * tmp = tmp op rhs
+       * lhs = <cast tmp to lhs.type>
+       *)
+      let tmp = T.Var (create_tmp result_t) in
+      let cast_lhs_to_tmp = get_cast_instruction dst tmp result_t in
+      let binary_instr =
+        T.Binary { op = tacky_op; src1 = tmp; src2 = rhs; dst = tmp }
+      in
+
+      let cast_tmp_to_lhs = get_cast_instruction tmp dst lhs.t in
+      [ cast_lhs_to_tmp; binary_instr; cast_tmp_to_lhs ]
   in
-  (instructions, dst)
+  (eval_rhs @ operation_and_assignment, dst)
 
 and emit_and_expression e1 e2 =
   let eval_v1, v1 = emit_tacky_for_exp e1 in
   let eval_v2, v2 = emit_tacky_for_exp e2 in
   let false_label = Unique_ids.make_label "and_false" in
   let end_label = Unique_ids.make_label "and_end" in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp Types.Int in
   let dst = T.Var dst_name in
   let instructions =
     eval_v1
@@ -119,10 +184,10 @@ and emit_and_expression e1 e2 =
     @ eval_v2
     @ [
         T.JumpIfZero (v2, false_label);
-        T.Copy { src = Constant 1; dst };
+        T.Copy { src = Constant Const.int_one; dst };
         T.Jump end_label;
         T.Label false_label;
-        T.Copy { src = Constant 0; dst };
+        T.Copy { src = Constant Const.int_zero; dst };
         T.Label end_label;
       ]
   in
@@ -133,27 +198,34 @@ and emit_or_expression e1 e2 =
   let eval_v2, v2 = emit_tacky_for_exp e2 in
   let true_label = Unique_ids.make_label "or_true" in
   let end_label = Unique_ids.make_label "or_end" in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp Types.Int in
   let dst = T.Var dst_name in
   let instructions =
     eval_v1
     @ (T.JumpIfNotZero (v1, true_label) :: eval_v2)
     @ T.JumpIfNotZero (v2, true_label)
-      :: T.Copy { src = Constant 0; dst }
+      :: T.Copy { src = Constant Const.int_zero; dst }
       :: T.Jump end_label
       :: T.Label true_label
-      :: T.Copy { src = Constant 1; dst }
+      :: T.Copy { src = Constant Const.int_one; dst }
       :: [ T.Label end_label ]
   in
   (instructions, dst)
 
-and emit_conditional_expression condition e1 e2 =
+and emit_assignment v rhs =
+  let rhs_instructions, rhs_result = emit_tacky_for_exp rhs in
+  let instructions =
+    rhs_instructions @ [ T.Copy { src = rhs_result; dst = Var v } ]
+  in
+  (instructions, Var v)
+
+and emit_conditional_expression t condition e1 e2 =
   let eval_cond, c = emit_tacky_for_exp condition in
   let eval_v1, v1 = emit_tacky_for_exp e1 in
   let eval_v2, v2 = emit_tacky_for_exp e2 in
   let e2_label = Unique_ids.make_label "conditional_else" in
   let end_label = Unique_ids.make_label "conditional_end" in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let instructions =
     eval_cond
@@ -166,8 +238,8 @@ and emit_conditional_expression condition e1 e2 =
   in
   (instructions, dst)
 
-and emit_fun_call f args =
-  let dst_name = Unique_ids.make_temporary () in
+and emit_fun_call t f args =
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let arg_instructions, arg_vals =
     List.split (List.map emit_tacky_for_exp args)
@@ -218,9 +290,7 @@ and emit_local_declaration = function
 and emit_var_declaration = function
   | { name; init = Some e; _ } ->
       (* treat declaration with initializer like an assignment expression *)
-      let eval_assignment, _assign_result =
-        emit_tacky_for_exp (Ast.Assignment (Var name, e))
-      in
+      let eval_assignment, _assign_result = emit_assignment name e in
       eval_assignment
   | { init = None; _ } ->
       (* don't generate instructions for declaration without initializer *) []
@@ -278,7 +348,7 @@ and emit_tacky_for_while_loop condition body id =
 and emit_tacky_for_switch control body id cases =
   let br_label = break_label id in
   let eval_control, c = emit_tacky_for_exp control in
-  let cmp_result = T.Var (Unique_ids.make_temporary ()) in
+  let cmp_result = T.Var (create_tmp control.t) in
   let emit_tacky_for_case (key, id) =
     match key with
     (* case statement - emit tacky now *)
@@ -340,7 +410,7 @@ let emit_fun_declaration = function
       let body_instructions =
         List.concat_map emit_tacky_for_block_item block_items
       in
-      let extra_return = T.(Return (Constant 0)) in
+      let extra_return = T.(Return (Constant Const.int_zero)) in
       Some
         (T.Function
            { name; global; params; body = body_instructions @ [ extra_return ] })
@@ -351,8 +421,12 @@ let convert_symbols_to_tacky all_symbols =
     match entry.Symbols.attrs with
     | Symbols.StaticAttr { init; global } -> (
         match init with
-        | Initial i -> Some (T.StaticVariable { name; global; init = i })
-        | Tentative -> Some (StaticVariable { name; global; init = 0 })
+        | Initial i ->
+            Some (T.StaticVariable { name; t = entry.t; global; init = i })
+        | Tentative ->
+            Some
+              (T.StaticVariable
+                 { name; t = entry.t; global; init = Initializers.zero entry.t })
         | NoInitializer -> None)
     | _ -> None
   in

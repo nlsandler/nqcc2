@@ -1,4 +1,4 @@
-open Ast
+open Ast.Untyped
 
 let rec label_statement (current_break_id, current_continue_id) = function
   | Break _ -> (

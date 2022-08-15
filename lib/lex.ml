@@ -26,7 +26,8 @@ let check_extra_credit tok =
 
 (* regular expressions for tokens *)
 let id_regexp = Str.regexp {|[A-Za-z_][A-Za-z0-9_]*\b|}
-let const_regexp = Str.regexp {|[0-9]+\b|}
+let int_regexp = Str.regexp {|[0-9]+\b|}
+let long_regexp = Str.regexp {|[0-9]+[lL]\b|}
 
 let id_to_tok = function
   | "int" -> KWInt
@@ -45,6 +46,7 @@ let id_to_tok = function
   | "default" -> KWDefault
   | "static" -> KWStatic
   | "extern" -> KWExtern
+  | "long" -> KWLong
   | other -> Identifier other
 
 let rec lex_helper chars =
@@ -97,16 +99,23 @@ let rec lex_helper chars =
 
 and lex_constant input_chars =
   let input = String.implode input_chars in
-  if Str.string_match const_regexp input 0 then
-    (* extract the portion of the string that matched the input, and convert it to a Constant token *)
-    let const_str = Str.matched_string input in
-    let tok = Constant (Int.of_string const_str) in
-    (* remaining is the rest of the input after the substring that matched the regex *)
-    let remaining = Str.string_after input (Str.match_end ()) in
-    tok :: lex_helper (String.explode remaining)
-  else
-    failwith
-      ("Lexer failure: input starts with a digit but isn't a constant: " ^ input)
+  let tok =
+    if Str.string_match long_regexp input 0 then
+      (* extract the portion of the string that matched the input, except the l suffix, and convert it to a Constant token *)
+      let const_str = String.rchop (Str.matched_string input) in
+      ConstLong (Big_int.of_string const_str)
+    else if Str.string_match int_regexp input 0 then
+      (* extract the portion of the string that matched the input, and convert it to a Constant token *)
+      let const_str = Str.matched_string input in
+      ConstInt (Big_int.of_string const_str)
+    else
+      failwith
+        ("Lexer failure: input starts with a digit but isn't a constant: "
+        ^ input)
+  in
+  (* remaining is the rest of the input after the substring that matched the regex *)
+  let remaining = Str.string_after input (Str.match_end ()) in
+  tok :: lex_helper (String.explode remaining)
 
 and lex_identifier input_chars =
   let input = String.implode input_chars in

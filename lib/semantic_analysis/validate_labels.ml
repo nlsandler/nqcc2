@@ -1,8 +1,8 @@
-open Ast
+open Ast.Untyped
 open Batteries
 
 let rec collect_labels_from_statement transform_lbl (defined, used) = function
-  | Ast.Goto lbl -> ((defined, Set.add lbl used), Ast.Goto (transform_lbl lbl))
+  | Goto lbl -> ((defined, Set.add lbl used), Goto (transform_lbl lbl))
   | LabeledStatement (lbl, stmt) ->
       if Set.mem lbl defined then failwith ("Duplicate label: " ^ lbl);
       let defined' = Set.add lbl defined in
@@ -66,10 +66,10 @@ let rec collect_labels_from_statement transform_lbl (defined, used) = function
       ((defined, used), s)
 
 and collect_labels_from_block_item transform_lbl lbls = function
-  | Ast.S stmt ->
+  | S stmt ->
       let lbls, stmt' = collect_labels_from_statement transform_lbl lbls stmt in
       (lbls, S stmt')
-  | Ast.D _ as decl -> (lbls, decl)
+  | D _ as decl -> (lbls, decl)
 
 let validate_labels_in_fun fn_decl =
   let transform_lbl lbl = fn_decl.name ^ "." ^ lbl in

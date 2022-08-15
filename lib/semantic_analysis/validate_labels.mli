@@ -1,1 +1,1 @@
-val validate_labels : Ast.t -> Ast.t
+val validate_labels : Ast.Untyped.t -> Ast.Untyped.t
