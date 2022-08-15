@@ -5,10 +5,14 @@
  (modules
   ast
   assembly
+  assembly_symbols
   codegen
   compile
+  const
+  const_convert
   emit
   identifier_resolution
+  initializers
   instruction_fixup
   label_loops
   lex
@@ -22,6 +26,7 @@
   tokens
   typecheck
   types
+  type_utils
   settings
   unique_ids)
  (libraries batteries ppx_deriving ppx_inline_test camlp-streams)

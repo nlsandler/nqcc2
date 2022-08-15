@@ -1,1 +1,1 @@
-val resolve : Ast.t -> Ast.t
+val resolve : Ast.Untyped.t -> Ast.Untyped.t
