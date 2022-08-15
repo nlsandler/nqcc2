@@ -145,11 +145,14 @@ let pass_params param_list =
   List.mapi pass_in_register register_params
   @ List.mapi pass_on_stack stack_params
 
-let convert_function (Tacky.Function { name; body; params }) =
-  let instructions =
-    pass_params params @ List.concat_map convert_instruction body
-  in
-  Assembly.Function { name; instructions }
+let convert_top_level = function
+  | Tacky.Function { name; global; body; params } ->
+      let instructions =
+        pass_params params @ List.concat_map convert_instruction body
+      in
+      Assembly.Function { name; global; instructions }
+  | Tacky.StaticVariable { name; global; init } ->
+      Assembly.StaticVariable { name; global; init }
 
-let gen (Tacky.Program fn_defs) =
-  Assembly.Program (List.map convert_function fn_defs)
+let gen (Tacky.Program top_levels) =
+  Assembly.Program (List.map convert_top_level top_levels)

@@ -45,6 +45,34 @@ let get_precedence = function
   | T.EqualSign -> Some 1
   | _ -> None
 
+(* getting a list of specifiers *)
+
+let rec parse_specifier_list tokens =
+  match peek tokens with
+  | T.KWInt | KWStatic | KWExtern ->
+      let spec = Stream.next tokens in
+      spec :: parse_specifier_list tokens
+  | _ -> []
+
+let parse_storage_class = function
+  | T.KWExtern -> Extern
+  | KWStatic -> Static
+  | _ -> failwith "Internal error: bad storage class" [@coverage off]
+
+let parse_type_and_storage_class specifier_list =
+  let types, storage_classes =
+    List.partition (fun tok -> tok = T.KWInt) specifier_list
+  in
+  if List.length types <> 1 then failwith "Invalid type specifier"
+  else
+    let storage_class =
+      match storage_classes with
+      | [] -> None
+      | [ sc ] -> Some (parse_storage_class sc)
+      | _ :: _ -> failwith "Invalid storage class"
+    in
+    (Types.Int, storage_class)
+
 (* parsing grammar symbols *)
 
 (* <identifier> ::= ? An identifier token ? *)
@@ -273,7 +301,7 @@ and parse_for_loop tokens =
 (* <block-item> ::= <statement> | <declaration> *)
 and parse_block_item tokens =
   match peek tokens with
-  | T.KWInt -> D (parse_declaration tokens)
+  | T.(KWInt | KWStatic | KWExtern) -> D (parse_declaration tokens)
   | _ -> S (parse_statement tokens)
 
 (* helper function to parse list of block items, stopping when we hit a close brace *)
@@ -295,7 +323,7 @@ and parse_block tokens =
    <function-declaration> ::= "int" <identifier> "(" "void" | <param-list> ")" ( <block> | ";")
    we've already parsed "int" <identifier>
 *)
-and finish_parsing_function_declaration name tokens =
+and finish_parsing_function_declaration storage_class name tokens =
   expect T.OpenParen tokens;
   let params =
     match peek tokens with
@@ -314,7 +342,7 @@ and finish_parsing_function_declaration name tokens =
     | other ->
         raise_error ~expected:(Name "function body or semicolon") ~actual:other
   in
-  { name; params; body }
+  { name; storage_class; params; body }
 
 (* <param-list> ::= "int" <identifier> { "," "int" <identifier> } *)
 and parse_param_list tokens =
@@ -329,13 +357,13 @@ and parse_param_list tokens =
 
 (* <variable-declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
    we've already parsed "int" <identifer> *)
-and finish_parsing_variable_declaration name tokens =
+and finish_parsing_variable_declaration storage_class name tokens =
   match Stream.next tokens with
-  | T.Semicolon -> { name; init = None }
+  | T.Semicolon -> { name; storage_class; init = None }
   | T.EqualSign ->
       let init = parse_expression 0 tokens in
       expect T.Semicolon tokens;
-      { name; init = Some init }
+      { name; storage_class; init = Some init }
   | other ->
       raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
@@ -343,11 +371,13 @@ and finish_parsing_variable_declaration name tokens =
    parse "int" <identifier>, then call appropriate function to finish parsing
 *)
 and parse_declaration tokens =
-  let _ = expect KWInt tokens in
+  let specifiers = parse_specifier_list tokens in
+  let _typ, storage_class = parse_type_and_storage_class specifiers in
   let name = parse_id tokens in
   match peek tokens with
-  | T.OpenParen -> FunDecl (finish_parsing_function_declaration name tokens)
-  | _ -> VarDecl (finish_parsing_variable_declaration name tokens)
+  | T.OpenParen ->
+      FunDecl (finish_parsing_function_declaration storage_class name tokens)
+  | _ -> VarDecl (finish_parsing_variable_declaration storage_class name tokens)
 
 (* helper function to accept variable declarations and reject function declarations *)
 and parse_variable_declaration tokens =
@@ -361,30 +391,26 @@ and parse_variable_declaration tokens =
 (* <for-init> ::= <declaration> | [ <exp> ] ";" *)
 and parse_for_init tokens =
   match peek tokens with
-  | T.KWInt -> InitDecl (parse_variable_declaration tokens)
+  (* note that a static or extern keyword here is invalid, but we'll catch that in semantic analysis *)
+  | T.(KWInt | KWStatic | KWExtern) ->
+      InitDecl (parse_variable_declaration tokens)
   | _ ->
       let opt_e = parse_optional_expression T.Semicolon tokens in
       InitExp opt_e
 
 (* { <function-declaration> } *)
-let rec parse_function_declaration_list tokens =
+let rec parse_declaration_list tokens =
   match Stream.peek tokens with
   | None -> (* we've reached the end of the input *) []
   | Some _ ->
-      let next_fun =
-        match parse_declaration tokens with
-        | FunDecl fd -> fd
-        | VarDecl _ ->
-            failwith
-              "expected function declaration at top level but found variable \
-               declaration "
-      in
-      next_fun :: parse_function_declaration_list tokens
+      let next_decl = parse_declaration tokens in
+
+      next_decl :: parse_declaration_list tokens
 
 (* <program> ::= { <function-declaration> } *)
 let parse tokens =
   try
     let token_stream = Stream.of_list tokens in
-    let functions = parse_function_declaration_list token_stream in
-    Program functions
+    let declarations = parse_declaration_list token_stream in
+    Program declarations
   with Stream.Failure -> raise (ParseError "Unexpected end of file")

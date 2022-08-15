@@ -15,6 +15,8 @@ let id_to_tok = function
   | "for" -> KWFor
   | "break" -> KWBreak
   | "continue" -> KWContinue
+  | "static" -> KWStatic
+  | "extern" -> KWExtern
   | other -> Identifier other
 
 (* whitespace characters: space, tab, newline, vertical tab, form feed *)
