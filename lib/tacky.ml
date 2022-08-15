@@ -35,8 +35,14 @@ type instruction =
   | FunCall of { f : string; args : tacky_val list; dst : tacky_val }
 [@@deriving show]
 
-type function_definition =
-  | Function of { name : string; params : string list; body : instruction list }
+type top_level =
+  | Function of {
+      name : string;
+      global : bool;
+      params : string list;
+      body : instruction list;
+    }
+  | StaticVariable of { name : string; global : bool; init : int }
 [@@deriving show]
 
-type t = Program of function_definition list [@@deriving show]
+type t = Program of top_level list [@@deriving show]

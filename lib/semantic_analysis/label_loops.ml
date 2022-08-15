@@ -51,8 +51,9 @@ and label_block_item current_label = function
 and label_block current_label (Block b) =
   Block (List.map (label_block_item current_label) b)
 
-let label_function_def fn =
-  { fn with body = Option.map (label_block None) fn.body }
+let label_decl = function
+  | FunDecl fn ->
+      FunDecl { fn with body = Option.map (label_block None) fn.body }
+  | var_decl -> var_decl
 
-let label_loops (Program fn_defs) =
-  Program (List.map label_function_def fn_defs)
+let label_loops (Program decls) = Program (List.map label_decl decls)

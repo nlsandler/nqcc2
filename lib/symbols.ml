@@ -1,21 +1,62 @@
 open Batteries
 
-(* note: is_defined is only used for functions *)
-type entry = { t : Types.t; is_defined : bool; stack_frame_size : int }
+type initial_value = Tentative | Initial of int | NoInitializer
+
+type identifier_attrs =
+  | FunAttr of { defined : bool; global : bool; stack_frame_size : int }
+  | StaticAttr of { init : initial_value; global : bool }
+  | LocalAttr
+
+type entry = { t : Types.t; attrs : identifier_attrs }
 
 let (symbol_table : (string, entry) Hashtbl.t) = Hashtbl.create 20
 
-let add_var name ~t =
-  Hashtbl.add symbol_table name { t; is_defined = false; stack_frame_size = 0 }
+(* always use replace instead of add; Hashtbl.add creates new binding for a name without remvoing the old one,
+ * but we want to remove old binding when we add a new one*)
 
-let add_fun name ~t ~is_defined =
-  Hashtbl.add symbol_table name { t; is_defined; stack_frame_size = 0 }
+let add_automatic_var name ~t =
+  Hashtbl.replace symbol_table name { t; attrs = LocalAttr }
+
+let add_static_var name ~t ~global ~init =
+  Hashtbl.replace symbol_table name { t; attrs = StaticAttr { init; global } }
+
+let add_fun name ~t ~global ~defined =
+  Hashtbl.replace symbol_table name
+    { t; attrs = FunAttr { global; defined; stack_frame_size = 0 } }
 
 let get name = Hashtbl.find symbol_table name
 let get_opt name = Hashtbl.find_option symbol_table name
+
+let is_global name =
+  match (get name).attrs with
+  | LocalAttr -> false
+  | StaticAttr { global; _ } -> global
+  | FunAttr { global; _ } -> global
+
+let is_static name =
+  try
+    match (get name).attrs with
+    | LocalAttr -> false
+    | StaticAttr _ -> true
+    | FunAttr _ ->
+        failwith "Internal error: functions don't have storage duration"
+        [@coverage off]
+  with Not_found ->
+    (* If it's not in the symbol table, it's a TACKY temporary, so not static *)
+    false
+
+let bindings () = Hashtbl.bindings symbol_table
 let is_defined = Hashtbl.mem symbol_table
 
 let set_bytes_required name bytes_required =
-  Hashtbl.modify name
-    (fun f -> { f with stack_frame_size = bytes_required })
-    symbol_table
+  let update_entry = function
+    | { t; attrs = FunAttr a } ->
+        { t; attrs = FunAttr { a with stack_frame_size = bytes_required } }
+    | _ -> failwith "Internal error: not a function" [@coverage off]
+  in
+  Hashtbl.modify name update_entry symbol_table
+
+let get_bytes_required name =
+  match Hashtbl.find symbol_table name with
+  | { attrs = FunAttr a; _ } -> a.stack_frame_size
+  | _ -> failwith "Internal error: not a function" [@coverage off]
