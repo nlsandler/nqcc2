@@ -52,9 +52,9 @@ let pp_instruction out = function
         Format.(pp_print_list ~pp_sep:comma_sep pp_tacky_val)
         args
 
-let pp_function_definition out (Function { name; params; body }) =
-  (* Format.pp_set_margin out 40; *)
+let pp_function_definition global name params out body =
   Format.pp_open_vbox out 0;
+  if global then Format.pp_print_string out "global ";
   Format.fprintf out "%s(%a):" name
     Format.(pp_print_list ~pp_sep:comma_sep pp_print_string)
     params;
@@ -64,14 +64,23 @@ let pp_function_definition out (Function { name; params; body }) =
   Format.pp_close_box out ();
   Format.pp_close_box out ()
 
-let pp_program out (Program fs) =
+let pp_tl out = function
+  | Function { global; name; params; body } ->
+      pp_function_definition global name params out body
+  | StaticVariable { global; name; init } ->
+      Format.pp_open_vbox out 0;
+      if global then Format.pp_print_string out "global ";
+      Format.fprintf out "%s = %d" name init;
+      Format.pp_close_box out ()
+
+let pp_program out (Program tls) =
   Format.pp_open_vbox out 0;
   Format.pp_print_list
     ~pp_sep:(fun out () ->
-      (* print _two_ newlines b/t functions *)
+      (* print _two_ newlines b/t top levels *)
       Format.pp_print_cut out ();
       Format.pp_print_cut out ())
-    pp_function_definition out fs;
+    pp_tl out tls;
   Format.pp_close_box out ();
   Format.pp_print_newline out () (* flush *)
 

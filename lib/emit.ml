@@ -1,5 +1,19 @@
 open Assembly
 
+let align_directive =
+  match !Settings.platform with OS_X -> ".balign" | Linux -> ".align"
+
+let show_label name =
+  match !Settings.platform with OS_X -> "_" ^ name | Linux -> name
+
+let show_local_label label =
+  match !Settings.platform with OS_X -> "L" ^ label | Linux -> ".L" ^ label
+
+let show_fun_name f =
+  match !Settings.platform with
+  | OS_X -> "_" ^ f
+  | Linux -> if Symbols.is_defined f then f else f ^ "@PLT"
+
 let show_reg = function
   | AX -> "%eax"
   | CX -> "%ecx"
@@ -15,6 +29,7 @@ let show_operand = function
   | Reg r -> show_reg r
   | Imm i -> Printf.sprintf "$%d" i
   | Stack i -> Printf.sprintf "%d(%%rbp)" i
+  | Data name -> Printf.sprintf "%s(%%rip)" (show_label name)
   (* printing out pseudoregisters is only for debugging *)
   | Pseudo name -> Printf.sprintf "%%%s" name [@coverage off]
 
@@ -47,17 +62,6 @@ let show_quadword_reg = function
 let show_quadword_operand = function
   | Reg r -> show_quadword_reg r
   | other -> show_operand other
-
-let show_label name =
-  match !Settings.platform with OS_X -> "_" ^ name | Linux -> name
-
-let show_fun_name f =
-  match !Settings.platform with
-  | OS_X -> "_" ^ f
-  | Linux -> if Symbols.is_defined f then f else f ^ "@PLT"
-
-let show_local_label label =
-  match !Settings.platform with OS_X -> "L" ^ label | Linux -> ".L" ^ label
 
 let show_unary_instruction = function Neg -> "negl" | Not -> "notl"
 
@@ -120,25 +124,51 @@ let emit_instruction chan = function
     ret
 |}
 
-let emit_function chan (Function { name; instructions }) =
-  let label = show_label name in
-  Printf.fprintf chan
-    {|
-    .globl %s
+let emit_global_directive chan global label =
+  if global then Printf.fprintf chan "\t.globl %s\n" label else ()
+
+let emit_tl chan = function
+  | Function { name; global; instructions } ->
+      let label = show_label name in
+      emit_global_directive chan global label;
+      Printf.fprintf chan
+        {|
+    .text
 %s:
     pushq %%rbp
     movq %%rsp, %%rbp
 |}
-    label label;
-  List.iter (emit_instruction chan) instructions
+        label;
+      List.iter (emit_instruction chan) instructions
+  | StaticVariable { name; global; init = 0 } ->
+      let label = show_label name in
+      emit_global_directive chan global label;
+      Printf.fprintf chan
+        {|
+    .bss
+    %s 4
+%s:
+    .zero 4
+|}
+        align_directive label
+  | StaticVariable { name; global; init } ->
+      let label = show_label name in
+      emit_global_directive chan global label;
+      Printf.fprintf chan {|
+  .data
+  %s 4
+%s:
+  .long %d
+|} align_directive
+        label init
 
 let emit_stack_note chan =
   match !Settings.platform with
   | OS_X -> ()
   | Linux -> Printf.fprintf chan "\t.section .note.GNU-stack,\"\",@progbits\n"
 
-let emit assembly_file (Program function_defs) =
+let emit assembly_file (Program tls) =
   let output_channel = open_out assembly_file in
-  List.iter (emit_function output_channel) function_defs;
+  List.iter (emit_tl output_channel) tls;
   emit_stack_note output_channel;
   close_out output_channel

@@ -19,6 +19,8 @@ type t =
   | KWSwitch
   | KWCase
   | KWDefault
+  | KWStatic
+  | KWExtern
   (* punctuation *)
   | OpenParen
   | CloseParen

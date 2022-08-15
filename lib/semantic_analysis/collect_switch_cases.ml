@@ -113,5 +113,8 @@ let analyze_function_def fun_decl =
       { fun_decl with body = Some blk }
   | None -> fun_decl
 
-let analyze_switches (Program fun_defs) =
-  Program (List.map analyze_function_def fun_defs)
+let analyze_decl = function
+  | FunDecl fd -> FunDecl (analyze_function_def fd)
+  | vd -> vd
+
+let analyze_switches (Program decls) = Program (List.map analyze_decl decls)

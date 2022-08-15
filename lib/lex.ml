@@ -43,6 +43,8 @@ let id_to_tok = function
   | "switch" -> KWSwitch
   | "case" -> KWCase
   | "default" -> KWDefault
+  | "static" -> KWStatic
+  | "extern" -> KWExtern
   | other -> Identifier other
 
 let rec lex_helper chars =

@@ -91,5 +91,9 @@ let validate_labels_in_fun fn_decl =
       { fn_decl with body = Some (Block renamed_block_items) }
   | None -> fn_decl
 
-let validate_labels (Program fn_defs) =
-  Program (List.map validate_labels_in_fun fn_defs)
+let validate_labels_in_decl = function
+  | FunDecl fd -> FunDecl (validate_labels_in_fun fd)
+  | vd -> vd
+
+let validate_labels (Program decls) =
+  Program (List.map validate_labels_in_decl decls)

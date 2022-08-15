@@ -81,28 +81,34 @@ let rec resolve_exp id_map = function
 let resolve_optional_exp id_map = Option.map (resolve_exp id_map)
 
 (* helper for resolving local variables and parameters; deals with validation and updating the variable map*)
-let resolve_local_var_helper id_map name =
-  match Map.find_opt name id_map with
-  | Some { from_current_scope = true; _ } ->
-      (* variable is present in the map and was defined in the current block *)
-      failwith "Duplicate variable declaration"
-  | _ ->
+let resolve_local_var_helper id_map name storage_class =
+  (match Map.find_opt name id_map with
+  | Some { from_current_scope = true; has_linkage; _ } ->
+      if not (has_linkage && storage_class = Some Extern) then
+        (* variable is present in the map and was defined in the current block *)
+        failwith "Duplicate variable declaration"
+      else ()
+  | _ -> ());
+  let entry =
+    if storage_class = Some Extern then
+      { unique_name = name; from_current_scope = true; has_linkage = true }
+    else
       (* variable isn't in the map, or was defined in an outer scope;
        * generate a unique name and add it to the map *)
       let unique_name = Unique_ids.make_named_temporary name in
-      let new_map =
-        Map.add name
-          { unique_name; from_current_scope = true; has_linkage = false }
-          id_map
-      in
-      (new_map, unique_name)
+      { unique_name; from_current_scope = true; has_linkage = false }
+  in
+  let new_map = Map.add name entry id_map in
+  (new_map, entry.unique_name)
 
-let resolve_local_var_declaration id_map { name; init } =
-  let new_map, unique_name = resolve_local_var_helper id_map name in
+let resolve_local_var_declaration id_map { name; init; storage_class } =
+  let new_map, unique_name =
+    resolve_local_var_helper id_map name storage_class
+  in
 
   let resolved_init = Option.map (resolve_exp new_map) init in
   (* return new map and resolved declaration *)
-  (new_map, { name = unique_name; init = resolved_init })
+  (new_map, { name = unique_name; init = resolved_init; storage_class })
 
 let resolve_for_init id_map = function
   | InitExp e -> (id_map, InitExp (resolve_optional_exp id_map e))
@@ -184,11 +190,17 @@ and resolve_local_declaration id_map = function
       (new_map, VarDecl resolved_vd)
   | FunDecl { body = Some _; _ } ->
       failwith "nested function definitions are not allowed"
+  | FunDecl { storage_class = Some Static; _ } ->
+      failwith "static keyword not allowed on local function declarations"
   | FunDecl fd ->
       let new_map, resolved_fd = resolve_function_declaration id_map fd in
       (new_map, FunDecl resolved_fd)
 
-and resolve_params id_map = List.fold_left_map resolve_local_var_helper id_map
+and resolve_params id_map =
+  let fold_param new_map param_name =
+    resolve_local_var_helper new_map param_name None
+  in
+  List.fold_left_map fold_param id_map
 
 and resolve_function_declaration id_map fn =
   match Map.find_opt fn.name id_map with
@@ -205,8 +217,27 @@ and resolve_function_declaration id_map fn =
       let resolved_body = Option.map (resolve_block inner_map1) fn.body in
       (new_map, { fn with params = resolved_params; body = resolved_body })
 
-let resolve (Program fn_decls) =
+let resolve_file_scope_variable_declaration id_map
+    ({ name; _ } as vd : Ast.variable_declaration) =
+  let new_map =
+    Map.add name
+      { unique_name = name; from_current_scope = true; has_linkage = true }
+      id_map
+  in
+  (new_map, vd)
+
+let resolve_global_declaration id_map = function
+  | FunDecl fd ->
+      let id_map1, fd = resolve_function_declaration id_map fd in
+      (id_map1, FunDecl fd)
+  | VarDecl vd ->
+      let id_map1, resolved_vd =
+        resolve_file_scope_variable_declaration id_map vd
+      in
+      (id_map1, VarDecl resolved_vd)
+
+let resolve (Program decls) =
   let _, resolved_decls =
-    List.fold_left_map resolve_function_declaration Map.empty fn_decls
+    List.fold_left_map resolve_global_declaration Map.empty decls
   in
   Program resolved_decls
