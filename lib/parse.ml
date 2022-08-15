@@ -42,6 +42,51 @@ module Private = struct
     | T.Identifier x -> x
     | other -> raise_error ~expected:(Name "an identifier") ~actual:other
 
+  (*** Specifiers ***)
+
+  (* Helper function to check whether a token is a specifier *)
+  let is_specifier = function
+    | T.KWStatic | T.KWExtern | T.KWInt -> true
+    | _ -> false
+
+  (* <specifier> ::= "int" | "static" | "extern" *)
+  let parse_specifier tokens =
+    let spec = Tok_stream.take_token tokens in
+    if is_specifier spec then spec
+    else
+      raise_error ~expected:(Name "a type or storage-class specifier")
+        ~actual:spec
+
+  (* Helper to consume a list of specifiers from start of token stream:
+   * { <specifier> }+ *)
+  let rec parse_specifier_list tokens =
+    let spec = parse_specifier tokens in
+    if is_specifier (Tok_stream.peek tokens) then
+      spec :: parse_specifier_list tokens
+    else [ spec ]
+
+  (* Convert a single token to a storage class *)
+  let parse_storage_class = function
+    | T.KWExtern -> Ast.Extern
+    | T.KWStatic -> Ast.Static
+    | other ->
+        raise_error ~expected:(Name "a storage class specifier") ~actual:other
+
+  (* Convert list of specifiers to type and storage class (Listing 10-21) *)
+  let parse_type_and_storage_class specifier_list =
+    let types, storage_classes =
+      List.partition (fun tok -> tok = T.KWInt) specifier_list
+    in
+    if List.length types <> 1 then raise (ParseError "Invalid type specifier")
+    else
+      let storage_class =
+        match storage_classes with
+        | [] -> None
+        | [ sc ] -> Some (parse_storage_class sc)
+        | _ :: _ -> raise (ParseError "Invalid storage class")
+      in
+      (Types.Int, storage_class)
+
   (*** Expressions ***)
 
   (* <int> ::= ? A constant token ? *)
@@ -183,26 +228,6 @@ module Private = struct
 
   (*** Declarations ***)
 
-  (* <variable-declaration> ::= "int" <identifier> [ "=" <exp> ] ";" *)
-  let parse_variable_declaration tokens =
-    expect T.KWInt tokens;
-    let var_name = parse_id tokens in
-    let init =
-      match Tok_stream.take_token tokens with
-      (* No initializer *)
-      | T.Semicolon -> None
-      (* There is an initializer *)
-      | T.EqualSign ->
-          let init_exp = parse_exp 0 tokens in
-          expect T.Semicolon tokens;
-          Some init_exp
-      (* Malformed declaration *)
-      | other ->
-          raise_error ~expected:(Name "An initializer or semicolon")
-            ~actual:other
-    in
-    Ast.{ name = var_name; init }
-
   (* <param-list> ::= "void" | "int" <identifier> { "," "int" <identifier> } *)
   let parse_param_list tokens =
     if Tok_stream.peek tokens = T.KWVoid then
@@ -221,41 +246,48 @@ module Private = struct
       in
       param_loop ()
 
-  (*
-   * <function-declaration> ::= "int" <identifier> "(" <param-list> ")" ( <block> | ";" )
+  (* <function-declaration> ::= { <specifier> }+ <identifier> "(" <param-list> ")" ( <block> | ";" )
+   * <variable-declaration> ::= { <specifier> }+ <identifier> [ "=" <exp> ] ";"
+   * Use a common function to parse both symbols
    *)
-  let rec parse_function_declaration tokens =
-    expect T.KWInt tokens;
-    let fun_name = parse_id tokens in
-    expect T.OpenParen tokens;
-    let params = parse_param_list tokens in
-    expect T.CloseParen tokens;
-    let body =
-      match Tok_stream.peek tokens with
-      | T.Semicolon ->
-          let _ = Tok_stream.take_token tokens in
-          None
-      | _ -> Some (parse_block tokens)
-    in
-    Ast.{ name = fun_name; params; body }
-
-  and parse_declaration tokens =
-    match Tok_stream.npeek 3 tokens with
-    | [ T.KWInt; T.Identifier _; T.OpenParen ] ->
-        Ast.FunDecl (parse_function_declaration tokens)
-    | _ -> Ast.VarDecl (parse_variable_declaration tokens)
+  let rec parse_declaration tokens =
+    let specifiers = parse_specifier_list tokens in
+    let _typ, storage_class = parse_type_and_storage_class specifiers in
+    let name = parse_id tokens in
+    match Tok_stream.peek tokens with
+    (* It's a function declaration *)
+    | T.OpenParen ->
+        let _ = Tok_stream.take_token tokens in
+        let params = parse_param_list tokens in
+        expect T.CloseParen tokens;
+        let body =
+          match Tok_stream.peek tokens with
+          | T.Semicolon ->
+              let _ = Tok_stream.take_token tokens in
+              None
+          | _ -> Some (parse_block tokens)
+        in
+        Ast.FunDecl { name; storage_class; params; body }
+    (* It's a variable *)
+    | tok ->
+        let init =
+          if tok = T.EqualSign then
+            let _ = Tok_stream.take_token tokens in
+            Some (parse_exp 0 tokens)
+          else None
+        in
+        expect T.Semicolon tokens;
+        Ast.VarDecl { name; storage_class; init }
 
   (*** Statements and blocks ***)
 
-  (* <for-init> ::= <variable-declaration> | [ <exp> ] ";"
-
-     NOTE: this isn't actually mutually recursive with
-     parse_declaration/parse_statement/etc., but it will be in the next chapter,
-     so we'll go ahead and use the 'and' keyword to make it part of this block
-     of mutually recursive functions to avoid moving it around *)
+  (* <for-init> ::= <variable-declaration> | [ <exp> ] ";" *)
   and parse_for_init tokens =
-    if Tok_stream.peek tokens = T.KWInt then
-      Ast.InitDecl (parse_variable_declaration tokens)
+    if is_specifier (Tok_stream.peek tokens) then
+      match parse_declaration tokens with
+      | Ast.VarDecl vd -> Ast.InitDecl vd
+      | _ ->
+          raise (ParseError "Found a function declaration in a for loop header")
     else
       let opt_e = parse_optional_exp T.Semicolon tokens in
       Ast.InitExp opt_e
@@ -346,7 +378,8 @@ module Private = struct
 
   (* <block-item> ::= <statement> | <declaration> *)
   and parse_block_item tokens =
-    if Tok_stream.peek tokens = T.KWInt then Ast.D (parse_declaration tokens)
+    if is_specifier (Tok_stream.peek tokens) then
+      Ast.D (parse_declaration tokens)
     else Ast.S (parse_statement tokens)
 
   (* <block> ::= "{" { <block-item> } "}" *)
@@ -364,12 +397,12 @@ module Private = struct
 
   (*** Top Level ***)
 
-  (* <program> ::= { <function-declaration> } *)
+  (* <program> ::= { <declaration> } *)
   let parse_program tokens =
     let rec parse_decl_loop () =
       if Tok_stream.is_empty tokens then []
       else
-        let next_decl = parse_function_declaration tokens in
+        let next_decl = parse_declaration tokens in
         next_decl :: parse_decl_loop ()
     in
     let fun_decls = parse_decl_loop () in

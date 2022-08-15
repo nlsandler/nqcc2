@@ -40,6 +40,8 @@ let convert_identifier = function
   | "for" -> T.KWFor
   | "break" -> T.KWBreak
   | "continue" -> T.KWContinue
+  | "static" -> T.KWStatic
+  | "extern" -> T.KWExtern
   | other -> T.Identifier other
 
 let convert_int s = T.Constant (int_of_string s)
