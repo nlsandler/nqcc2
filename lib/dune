@@ -5,9 +5,13 @@
  (modules
   ast
   assembly
+  assembly_symbols
   codegen
   compile
+  const
+  const_convert
   emit
+  initializers
   instruction_fixup
   label_loops
   lex
@@ -23,10 +27,11 @@
   tok_stream
   typecheck
   types
+  type_utils
   settings
   unique_ids
   utils)
- (libraries re camlp-streams)
+ (libraries re camlp-streams zarith)
  (preprocess
   (pps ppx_deriving.show))
  (instrumentation

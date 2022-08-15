@@ -10,4 +10,5 @@ end
 
 module StringUtil = struct
   let drop n s = String.sub s n (String.length s - n)
+  let chop_suffix ?(n = 1) s = String.sub s 0 (String.length s - n)
 end

@@ -1,1 +1,1 @@
-val gen : Ast.t -> Tacky.t
+val gen : Ast.Typed.t -> Tacky.t

@@ -30,6 +30,7 @@
   ppx_inline_test
   cmdliner
   camlp-streams
-  re))
+  re
+  zarith))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project

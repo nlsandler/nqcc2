@@ -13,4 +13,5 @@ end
 
 module StringUtil : sig
   val drop : int -> string -> string
+  val chop_suffix : ?n:int -> string -> string
 end

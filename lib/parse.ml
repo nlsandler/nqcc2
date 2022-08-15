@@ -2,6 +2,8 @@ module T = struct
   include Tokens
 end
 
+module Ast = Ast.Untyped
+
 (* Raised when we hit an unexpected token or end of file *)
 exception ParseError of string
 
@@ -44,12 +46,29 @@ module Private = struct
 
   (*** Specifiers ***)
 
+  (* Helper function to check whether a token is a type specifier *)
+  let is_type_specifier = function T.KWInt | T.KWLong -> true | _ -> false
+
+  (* <type-specifier> ::= "int" | "long" *)
+  let parse_type_specifier tokens =
+    let spec = Tok_stream.take_token tokens in
+    if is_type_specifier spec then spec
+    else raise_error ~expected:(Name "a type specifier") ~actual:spec
+
+  (* Helper to consume a list of type specifiers from start of token stream:
+   * { <type-specifier> }+ *)
+  let rec parse_type_specifier_list tokens =
+    let spec = parse_type_specifier tokens in
+    if is_type_specifier (Tok_stream.peek tokens) then
+      spec :: parse_type_specifier_list tokens
+    else [ spec ]
+
   (* Helper function to check whether a token is a specifier *)
   let is_specifier = function
-    | T.KWStatic | T.KWExtern | T.KWInt -> true
-    | _ -> false
+    | T.KWStatic | T.KWExtern -> true
+    | other -> is_type_specifier other
 
-  (* <specifier> ::= "int" | "static" | "extern" *)
+  (* <specifier> ::= <type-specifier> | "static" | "extern" *)
   let parse_specifier tokens =
     let spec = Tok_stream.take_token tokens in
     if is_specifier spec then spec
@@ -72,28 +91,49 @@ module Private = struct
     | other ->
         raise_error ~expected:(Name "a storage class specifier") ~actual:other
 
-  (* Convert list of specifiers to type and storage class (Listing 10-21) *)
+  (* Convert list of specifiers to a type (Listing 11-4) *)
+  let parse_type specifier_list =
+    match specifier_list with
+    | [ T.KWInt ] -> Types.Int
+    | [ T.KWInt; T.KWLong ] | [ T.KWLong; T.KWInt ] | [ T.KWLong ] -> Types.Long
+    | _ -> raise (ParseError "Invalid type specifier")
+
+  (* Convert list of specifiers to type and storage class (Listing 11-5) *)
   let parse_type_and_storage_class specifier_list =
     let types, storage_classes =
-      List.partition (fun tok -> tok = T.KWInt) specifier_list
+      List.partition is_type_specifier specifier_list
     in
-    if List.length types <> 1 then raise (ParseError "Invalid type specifier")
-    else
-      let storage_class =
-        match storage_classes with
-        | [] -> None
-        | [ sc ] -> Some (parse_storage_class sc)
-        | _ :: _ -> raise (ParseError "Invalid storage class")
-      in
-      (Types.Int, storage_class)
+    let typ = parse_type types in
+    let storage_class =
+      match storage_classes with
+      | [] -> None
+      | [ sc ] -> Some (parse_storage_class sc)
+      | _ :: _ -> failwith "Internal error - not a storage class"
+    in
+    (typ, storage_class)
+
+  (*** Constants ***)
+
+  (* <const> ::= <int> | <long>
+
+     Convert a single token into constant AST node (Listing 11-6). Note that
+     this is slightly different than most parse_* functions because it takes one
+     token instead of a token stream. *)
+  let parse_constant token =
+    let v, is_int =
+      match token with
+      | T.ConstInt i -> (i, true)
+      | T.ConstLong l -> (l, false)
+      | other -> raise_error ~expected:(Name "a constant") ~actual:other
+    in
+    (* ~$2, etc are literals of type Z.t (an arbitrary-precision type) *)
+    if Z.(gt v ((~$2 ** 63) - ~$1)) then
+      raise (ParseError "Constant is too large to represent as an int or long")
+    else if is_int && Z.(leq v ((~$2 ** 31) - ~$1)) then
+      Const.ConstInt (Z.to_int32 v)
+    else Const.ConstLong (Z.to_int64 v)
 
   (*** Expressions ***)
-
-  (* <int> ::= ? A constant token ? *)
-  let parse_int tokens =
-    match Tok_stream.take_token tokens with
-    | T.Constant c -> Ast.Constant c
-    | other -> raise_error ~expected:(Name "a constant") ~actual:other
 
   (* return Some prec if token represents a binary operator, None otherwise*)
   let get_precedence = function
@@ -136,13 +176,17 @@ module Private = struct
     | T.GreaterOrEqual -> Ast.GreaterOrEqual
     | other -> raise_error ~expected:(Name "a binary operator") ~actual:other
 
-  (* <factor> ::= <int> | <identifier> | <unop> <factor> | "(" <exp> ")"
+  (* <factor> ::= <const> | <identifier>
+   *            | "(" { <type-specifier }+ ")" <factor>
+   *            | <unop> <factor> | "(" <exp> ")"
    *            | <identifier> "(" [ <argument-list> ] ")" *)
   let rec parse_factor tokens =
     let next_token = Tok_stream.peek tokens in
     match next_token with
     (* constant *)
-    | T.Constant _ -> parse_int tokens
+    | T.ConstInt _ | T.ConstLong _ ->
+        let tok = Tok_stream.take_token tokens in
+        Ast.Constant (parse_constant tok)
     (* variable or function call *)
     | T.Identifier _ ->
         let id = parse_id tokens in
@@ -161,13 +205,22 @@ module Private = struct
         let operator = parse_unop tokens in
         let inner_exp = parse_factor tokens in
         Ast.Unary (operator, inner_exp)
-    (* parenthesized expression *)
+    (* cast or parenthesized expression *)
     | T.OpenParen ->
         (* Consume open paren *)
         let _ = Tok_stream.take_token tokens in
-        let e = parse_exp 0 tokens in
-        expect T.CloseParen tokens;
-        e
+        if is_type_specifier (Tok_stream.peek tokens) then
+          (* It's a cast expression *)
+          let type_specifiers = parse_type_specifier_list tokens in
+          let target_type = parse_type type_specifiers in
+          let _ = expect T.CloseParen tokens in
+          let inner_exp = parse_factor tokens in
+          Ast.Cast { target_type; e = inner_exp }
+        else
+          (* It's parenthesized *)
+          let e = parse_exp 0 tokens in
+          expect T.CloseParen tokens;
+          e
     (* errors *)
     | t -> raise_error ~expected:(Name "a factor") ~actual:t
 
@@ -228,7 +281,8 @@ module Private = struct
 
   (*** Declarations ***)
 
-  (* <param-list> ::= "void" | "int" <identifier> { "," "int" <identifier> } *)
+  (* <param-list> ::= "void"
+   *                | { <type-specifier> }+ <identifier> { "," { <type-specifier> }+ <identifier> } *)
   let parse_param_list tokens =
     if Tok_stream.peek tokens = T.KWVoid then
       (* no params - return empty list *)
@@ -236,8 +290,9 @@ module Private = struct
       []
     else
       let rec param_loop () =
-        expect KWInt tokens;
-        let next_param = parse_id tokens in
+        let next_param_t = parse_type (parse_type_specifier_list tokens) in
+        let next_param_name = parse_id tokens in
+        let next_param = (next_param_t, next_param_name) in
         if Tok_stream.peek tokens = T.Comma then
           (* there are more params *)
           let _ = Tok_stream.take_token tokens in
@@ -252,13 +307,15 @@ module Private = struct
    *)
   let rec parse_declaration tokens =
     let specifiers = parse_specifier_list tokens in
-    let _typ, storage_class = parse_type_and_storage_class specifiers in
+    let typ, storage_class = parse_type_and_storage_class specifiers in
     let name = parse_id tokens in
     match Tok_stream.peek tokens with
     (* It's a function declaration *)
     | T.OpenParen ->
         let _ = Tok_stream.take_token tokens in
-        let params = parse_param_list tokens in
+        let params_with_types = parse_param_list tokens in
+        let param_types, param_names = List.split params_with_types in
+        let fun_type = Types.FunType { param_types; ret_type = typ } in
         expect T.CloseParen tokens;
         let body =
           match Tok_stream.peek tokens with
@@ -267,7 +324,8 @@ module Private = struct
               None
           | _ -> Some (parse_block tokens)
         in
-        Ast.FunDecl { name; storage_class; params; body }
+        Ast.FunDecl
+          { name; fun_type; storage_class; params = param_names; body }
     (* It's a variable *)
     | tok ->
         let init =
@@ -277,7 +335,7 @@ module Private = struct
           else None
         in
         expect T.Semicolon tokens;
-        Ast.VarDecl { name; storage_class; init }
+        Ast.VarDecl { name; var_type = typ; storage_class; init }
 
   (*** Statements and blocks ***)
 

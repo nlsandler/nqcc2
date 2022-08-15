@@ -18,6 +18,7 @@ depends: [
   "cmdliner"
   "camlp-streams"
   "re"
+  "zarith"
   "odoc" {with-doc}
 ]
 build: [

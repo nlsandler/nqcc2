@@ -20,8 +20,12 @@ let pp_binary_operator out = function
   | GreaterThan -> Format.pp_print_string out ">"
   | GreaterOrEqual -> Format.pp_print_string out "<="
 
+let const_to_string = function
+  | Const.ConstInt i -> Int32.to_string i
+  | ConstLong l -> Int64.to_string l ^ "l"
+
 let pp_tacky_val out = function
-  | Constant i -> Format.pp_print_int out i
+  | Constant i -> Format.pp_print_string out (const_to_string i)
   | Var s -> Format.pp_print_string out s
 
 let pp_instruction out = function
@@ -46,6 +50,10 @@ let pp_instruction out = function
       Format.fprintf out "%a = %s(%a)" pp_tacky_val dst f
         Format.(pp_print_list ~pp_sep:comma_sep pp_tacky_val)
         args
+  | SignExtend { src; dst } ->
+      Format.fprintf out "%a = SignExtend(%a)" pp_tacky_val dst pp_tacky_val src
+  | Truncate { src; dst } ->
+      Format.fprintf out "%a = Truncate(%a)" pp_tacky_val dst pp_tacky_val src
 
 let pp_function_definition global name params out body =
   Format.pp_open_vbox out 0;
@@ -62,10 +70,11 @@ let pp_function_definition global name params out body =
 let pp_tl out = function
   | Function { global; name; params; body } ->
       pp_function_definition global name params out body
-  | StaticVariable { global; name; init } ->
+  | StaticVariable { global; name; init; t } ->
       Format.pp_open_vbox out 0;
       if global then Format.pp_print_string out "global ";
-      Format.fprintf out "%s = %d" name init;
+      Format.fprintf out "%a %s = %a" Types.pp t name
+        Initializers.pp_static_init init;
       Format.pp_close_box out ()
 
 let pp_program out (Program tls) =

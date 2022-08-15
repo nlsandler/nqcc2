@@ -3,7 +3,9 @@
 open Nqcc
 
 let%test "leading whitespace" = Lex.lex "   return" = [ KWReturn ]
-let%test "trailing whitespace" = Lex.lex "0;\t\n" = [ Constant 0; Semicolon ]
+
+let%test "trailing whitespace" =
+  Lex.lex "0;\t\n" = [ ConstInt Z.zero; Semicolon ]
 
 let%test "a full program" =
   Lex.lex "int main(void){return 0;}"
@@ -15,7 +17,7 @@ let%test "a full program" =
       CloseParen;
       OpenBrace;
       KWReturn;
-      Constant 0;
+      ConstInt Z.zero;
       Semicolon;
       CloseBrace;
     ]

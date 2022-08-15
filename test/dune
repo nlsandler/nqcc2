@@ -3,4 +3,4 @@
  (inline_tests)
  (libraries nqcc)
  (preprocess
-  (pps ppx_inline_test)))
+  (pps ppx_inline_test ppx_expect)))

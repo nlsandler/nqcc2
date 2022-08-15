@@ -42,9 +42,15 @@ let convert_identifier = function
   | "continue" -> T.KWContinue
   | "static" -> T.KWStatic
   | "extern" -> T.KWExtern
+  | "long" -> T.KWLong
   | other -> T.Identifier other
 
-let convert_int s = T.Constant (int_of_string s)
+let convert_int s = T.ConstInt (Z.of_string s)
+
+let convert_long s =
+  (* drop "l" suffix *)
+  let const_str = StringUtil.chop_suffix s in
+  T.ConstLong (Z.of_string const_str)
 
 (** List of token definitions
 
@@ -62,6 +68,7 @@ let token_defs =
     def {_|[A-Za-z_][A-Za-z0-9_]*\b|_} convert_identifier;
     (* constants *)
     def {_|[0-9]+\b|_} convert_int;
+    def {_|[0-9]+[lL]\b|_} convert_long;
     (* punctuation *)
     def {_|\(|_} (literal T.OpenParen);
     def {_|\)|_} (literal T.CloseParen);
