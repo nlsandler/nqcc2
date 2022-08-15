@@ -19,13 +19,13 @@ let compile target stage src_file =
        * 1. resolve identifiers *)
       let resolved_ast = Identifier_resolution.resolve ast in
       (* 2. annotate loops and break/continue statements *)
-      let validated_ast = Label_loops.label_loops resolved_ast in
+      let annotated_ast = Label_loops.label_loops resolved_ast in
       (* 3. typecheck definitions and uses of functions adn variables *)
-      let _ = Typecheck.typecheck validated_ast in
+      let typed_ast = Typecheck.typecheck annotated_ast in
       if stage = Settings.Validate then ()
       else
         (* Convert the AST to TACKY *)
-        let tacky = Tacky_gen.gen validated_ast in
+        let tacky = Tacky_gen.gen typed_ast in
         if stage = Settings.Tacky then ()
         else
           (* Assembly generation has three steps:

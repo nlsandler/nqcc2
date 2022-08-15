@@ -1,11 +1,20 @@
 open Batteries
 
+module Ast = struct
+  include Ast.Typed
+end
+
 module T = struct
   include Tacky
 end
 
 let break_label id = "break." ^ id
 let continue_label id = "continue." ^ id
+
+let create_tmp t =
+  let name = Unique_ids.make_temporary () in
+  Symbols.add_automatic_var name ~t;
+  name
 
 let convert_op = function
   | Ast.Complement -> T.Complement
@@ -29,39 +38,51 @@ let convert_binop = function
       [@coverage off]
 
 (* return list of instructions to evaluate expression a and resulting TACKY value as a pair *)
-let rec emit_tacky_for_exp = function
+let rec emit_tacky_for_exp Ast.{ e; t } =
+  match e with
   (* don't need any instructions to calculate a constant or variable  *)
   | Ast.Constant c -> ([], T.Constant c)
   | Ast.Var v -> ([], T.Var v)
-  | Ast.Unary (op, inner) -> emit_unary_expression op inner
+  | Ast.Cast { target_type; e } -> emit_cast_expression target_type e
+  | Ast.Unary (op, inner) -> emit_unary_expression t op inner
   | Ast.Binary (And, e1, e2) -> emit_and_expression e1 e2
   | Ast.Binary (Or, e1, e2) -> emit_or_expression e1 e2
-  | Ast.Binary (op, e1, e2) -> emit_binary_expression op e1 e2
-  | Ast.Assignment (Var v, rhs) ->
-      let rhs_instructions, rhs_result = emit_tacky_for_exp rhs in
-      let instructions =
-        rhs_instructions @ [ T.Copy { src = rhs_result; dst = Var v } ]
-      in
-      (instructions, Var v)
+  | Ast.Binary (op, e1, e2) -> emit_binary_expression t op e1 e2
+  | Ast.Assignment ({ e = Var v; _ }, rhs) -> emit_assignment v rhs
   | Ast.Assignment _ -> failwith "Internal error: bad lvalue" [@coverage off]
   | Ast.Conditional { condition; then_result; else_result } ->
-      emit_conditional_expression condition then_result else_result
-  | Ast.FunCall { f; args } -> emit_fun_call f args
+      emit_conditional_expression t condition then_result else_result
+  | Ast.FunCall { f; args } -> emit_fun_call t f args
 
 (* helper functions for individual expression *)
-and emit_unary_expression op inner =
+and emit_unary_expression t op inner =
   let eval_inner, v = emit_tacky_for_exp inner in
   (* define a temporary variable to hold result of this expression *)
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let tacky_op = convert_op op in
   let instructions = eval_inner @ [ T.Unary { op = tacky_op; src = v; dst } ] in
   (instructions, dst)
 
-and emit_binary_expression op e1 e2 =
+and emit_cast_expression target_type inner =
+  let eval_inner, result = emit_tacky_for_exp inner in
+  if Type_utils.get_type inner = target_type then (eval_inner, result)
+  else
+    let dst_name = create_tmp target_type in
+    let dst = T.Var dst_name in
+    let cast_instruction =
+      match target_type with
+      | Types.Long -> T.SignExtend { src = result; dst }
+      | Types.Int -> T.Truncate { src = result; dst }
+      | _ -> failwith "Internal error: cast to function type" [@coverage off]
+    in
+    let instructions = eval_inner @ [ cast_instruction ] in
+    (instructions, dst)
+
+and emit_binary_expression t op e1 e2 =
   let eval_v1, v1 = emit_tacky_for_exp e1 in
   let eval_v2, v2 = emit_tacky_for_exp e2 in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let tacky_op = convert_binop op in
   let instructions =
@@ -76,7 +97,7 @@ and emit_and_expression e1 e2 =
   let eval_v2, v2 = emit_tacky_for_exp e2 in
   let false_label = Unique_ids.make_label "and_false" in
   let end_label = Unique_ids.make_label "and_end" in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp Types.Int in
   let dst = T.Var dst_name in
   let instructions =
     eval_v1
@@ -84,10 +105,10 @@ and emit_and_expression e1 e2 =
     @ eval_v2
     @ [
         T.JumpIfZero (v2, false_label);
-        T.Copy { src = Constant 1; dst };
+        T.Copy { src = Constant Const.int_one; dst };
         T.Jump end_label;
         T.Label false_label;
-        T.Copy { src = Constant 0; dst };
+        T.Copy { src = Constant Const.int_zero; dst };
         T.Label end_label;
       ]
   in
@@ -98,27 +119,34 @@ and emit_or_expression e1 e2 =
   let eval_v2, v2 = emit_tacky_for_exp e2 in
   let true_label = Unique_ids.make_label "or_true" in
   let end_label = Unique_ids.make_label "or_end" in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp Types.Int in
   let dst = T.Var dst_name in
   let instructions =
     eval_v1
     @ (T.JumpIfNotZero (v1, true_label) :: eval_v2)
     @ T.JumpIfNotZero (v2, true_label)
-      :: T.Copy { src = Constant 0; dst }
+      :: T.Copy { src = Constant Const.int_zero; dst }
       :: T.Jump end_label
       :: T.Label true_label
-      :: T.Copy { src = Constant 1; dst }
+      :: T.Copy { src = Constant Const.int_one; dst }
       :: [ T.Label end_label ]
   in
   (instructions, dst)
 
-and emit_conditional_expression condition e1 e2 =
+and emit_assignment v rhs =
+  let rhs_instructions, rhs_result = emit_tacky_for_exp rhs in
+  let instructions =
+    rhs_instructions @ [ T.Copy { src = rhs_result; dst = Var v } ]
+  in
+  (instructions, Var v)
+
+and emit_conditional_expression t condition e1 e2 =
   let eval_cond, c = emit_tacky_for_exp condition in
   let eval_v1, v1 = emit_tacky_for_exp e1 in
   let eval_v2, v2 = emit_tacky_for_exp e2 in
   let e2_label = Unique_ids.make_label "conditional_else" in
   let end_label = Unique_ids.make_label "conditional_end" in
-  let dst_name = Unique_ids.make_temporary () in
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let instructions =
     eval_cond
@@ -131,8 +159,8 @@ and emit_conditional_expression condition e1 e2 =
   in
   (instructions, dst)
 
-and emit_fun_call f args =
-  let dst_name = Unique_ids.make_temporary () in
+and emit_fun_call t f args =
+  let dst_name = create_tmp t in
   let dst = T.Var dst_name in
   let arg_instructions, arg_vals =
     List.split (List.map emit_tacky_for_exp args)
@@ -176,9 +204,7 @@ and emit_local_declaration = function
 and emit_var_declaration = function
   | { name; init = Some e; _ } ->
       (* treat declaration with initializer like an assignment expression *)
-      let eval_assignment, _assign_result =
-        emit_tacky_for_exp (Ast.Assignment (Var name, e))
-      in
+      let eval_assignment, _assign_result = emit_assignment name e in
       eval_assignment
   | { init = None; _ } ->
       (* don't generate instructions for declaration without initializer *) []
@@ -255,7 +281,7 @@ let emit_fun_declaration = function
       let body_instructions =
         List.concat_map emit_tacky_for_block_item block_items
       in
-      let extra_return = T.(Return (Constant 0)) in
+      let extra_return = T.(Return (Constant Const.int_zero)) in
       Some
         (T.Function
            { name; global; params; body = body_instructions @ [ extra_return ] })
@@ -266,8 +292,12 @@ let convert_symbols_to_tacky all_symbols =
     match entry.Symbols.attrs with
     | Symbols.StaticAttr { init; global } -> (
         match init with
-        | Initial i -> Some (T.StaticVariable { name; global; init = i })
-        | Tentative -> Some (StaticVariable { name; global; init = 0 })
+        | Initial i ->
+            Some (T.StaticVariable { name; t = entry.t; global; init = i })
+        | Tentative ->
+            Some
+              (T.StaticVariable
+                 { name; t = entry.t; global; init = Initializers.zero entry.t })
         | NoInitializer -> None)
     | _ -> None
   in

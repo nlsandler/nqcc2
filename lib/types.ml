@@ -1,1 +1,4 @@
-type t = Int | FunType of { param_count : int } [@@deriving show]
+[@@@coverage exclude_file]
+
+type t = Int | Long | FunType of { param_types : t list; ret_type : t }
+[@@deriving show]
