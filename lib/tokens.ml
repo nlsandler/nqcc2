@@ -5,9 +5,13 @@ type t =
   | Identifier of string
   | ConstInt of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   | ConstLong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
+  | ConstUInt of (Z.t[@equal Z.equal] [@printer Z.pp_print])
+  | ConstULong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   (* Keywords *)
   | KWInt
   | KWLong
+  | KWSigned
+  | KWUnsigned
   | KWReturn
   | KWVoid
   | KWIf

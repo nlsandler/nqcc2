@@ -1,3 +1,5 @@
+open Cnums
+
 module C = struct
   include Const
 end
@@ -10,11 +12,43 @@ module Ast = struct
   include Ast.Typed
 end
 
+module type Castable = sig
+  type t
+
+  val to_int32 : t -> int32
+  val to_int64 : t -> int64
+end
+
+(* Cast any integer to another type *)
+module IntCastEvaluator (C : Castable) = struct
+  let cast v = function
+    | T.Int -> Const.ConstInt (C.to_int32 v)
+    | UInt -> ConstUInt (v |> C.to_int64 |> UInt32.of_int64)
+    | Long -> ConstLong (C.to_int64 v)
+    | ULong -> ConstULong (v |> C.to_int64 |> UInt64.of_int64)
+    | FunType _ ->
+        failwith "Internal error: cannot cast constant to function type"
+        [@coverage off]
+end
+
+module UIntCaster = IntCastEvaluator (UInt32)
+module ULongCaster = IntCastEvaluator (UInt64)
+
+module IntCaster = IntCastEvaluator (struct
+  include Int32
+
+  let to_int32 x = x
+  let to_int64 x = Int64.of_int32 x
+end)
+
+module LongCaster = IntCastEvaluator (struct
+  include Int64
+
+  let to_int64 x = x
+end)
+
 let const_convert target_type = function
-  | C.ConstInt i ->
-      if target_type = T.Int then C.ConstInt i
-      else C.ConstLong (Int64.of_int32 i)
-  | C.ConstLong i ->
-      (* note that to_int32 reduces modulo 2**32 *)
-      if target_type = T.Long then C.ConstLong i
-      else C.ConstInt (Int64.to_int32 i)
+  | Const.ConstInt i -> IntCaster.cast i target_type
+  | ConstUInt ui -> UIntCaster.cast ui target_type
+  | ConstLong l -> LongCaster.cast l target_type
+  | ConstULong ul -> ULongCaster.cast ul target_type

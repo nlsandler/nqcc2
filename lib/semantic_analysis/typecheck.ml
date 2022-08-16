@@ -12,18 +12,22 @@ let convert_to e target_type =
   let cast = T.Cast { target_type; e } in
   set_type cast target_type
 
-let get_common_type t1 t2 = if t1 = t2 then t1 else Types.Long
+let get_common_type t1 t2 =
+  if t1 = t2 then t1
+  else if get_size t1 = get_size t2 then if is_signed t1 then t2 else t1
+  else if get_size t1 > get_size t2 then t1
+  else t2
 
 let typecheck_var v =
   let v_type = (Symbols.get v).t in
   let e = T.Var v in
   match v_type with
   | FunType _ -> failwith "Tried to use function name as variable "
-  | Int | Long -> set_type e v_type
+  | _ -> set_type e v_type
 
 let typecheck_const c =
   let e = T.Constant c in
-  match c with ConstInt _ -> set_type e Int | ConstLong _ -> set_type e Long
+  set_type e (Const.type_of_const c)
 
 (* tiny helper function to apply typecheck function to AST node option *)
 let opt_typecheck typecheck_fn = function
@@ -100,7 +104,6 @@ and typecheck_fun_call f args =
   let f_type = (Symbols.get f).t in
 
   match f_type with
-  | Int | Long -> failwith "Tried to use variable as function name"
   | FunType { param_types; ret_type } ->
       if List.length param_types <> List.length args then
         failwith "Function called with wrong number of arguments"
@@ -109,6 +112,7 @@ and typecheck_fun_call f args =
       let converted_args = List.map2 process_arg args param_types in
       let call_exp = T.FunCall { f; args = converted_args } in
       set_type call_exp ret_type
+  | _ -> failwith "Tried to use variable as function name"
 
 (* convert a constant to a static initializer, performing type conversion if needed *)
 let to_static_init var_type = function
@@ -117,6 +121,8 @@ let to_static_init var_type = function
         match Const_convert.const_convert var_type c with
         | ConstInt i -> Initializers.IntInit i
         | ConstLong l -> Initializers.LongInit l
+        | ConstUInt u -> Initializers.UIntInit u
+        | ConstULong ul -> Initializers.ULongInit ul
       in
       Symbols.Initial init_val
   | _ -> failwith "Non-constant initializer on static variable"

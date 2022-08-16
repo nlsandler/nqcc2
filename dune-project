@@ -26,6 +26,7 @@
   ppx_deriving
   ppx_inline_test
   cmdliner
-  camlp-streams))
+  camlp-streams
+  zarith))
 
 ; See the complete stanza docs at https://dune.readthedocs.io/en/stable/dune-files.html#dune-project

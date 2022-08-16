@@ -4,6 +4,8 @@ open Tokens
 let id_regexp = Str.regexp {|[A-Za-z_][A-Za-z0-9_]*\b|}
 let int_regexp = Str.regexp {|[0-9]+\b|}
 let long_regexp = Str.regexp {|[0-9]+[lL]\b|}
+let uint_regexp = Str.regexp {|[0-9]+[uU]\b|}
+let ulong_regexp = Str.regexp {|[0-9]+\([uU][lL]\|[lL][uU]\)\b|}
 
 let id_to_tok = function
   | "int" -> KWInt
@@ -19,6 +21,8 @@ let id_to_tok = function
   | "static" -> KWStatic
   | "extern" -> KWExtern
   | "long" -> KWLong
+  | "unsigned" -> KWUnsigned
+  | "signed" -> KWSigned
   | other -> Identifier other
 
 (* whitespace characters: space, tab, newline, vertical tab, form feed *)
@@ -26,6 +30,7 @@ let is_whitespace c = String.contains " \t\n\x0b\x0c" c
 let is_digit c = String.contains "0123456789" c
 let drop n s = String.sub s n (String.length s - n)
 let drop_first = drop 1
+let chop_suffix ?(n = 1) s = String.sub s 0 (String.length s - n)
 
 (* Get the first n characters of s as a list;
  * if s has n or fewer characters, return the whole string *)
@@ -70,16 +75,20 @@ and lex_constant input =
   let tok =
     if Str.string_match long_regexp input 0 then
       (* extract the portion of the string that matched the input, except the l suffix, and convert it to a Constant token *)
-      let const_str_with_suffix = Str.matched_string input in
-      let const_str =
-        String.sub const_str_with_suffix 0
-          (String.length const_str_with_suffix - 1)
-      in
+      let const_str = chop_suffix (Str.matched_string input) in
       ConstLong (Z.of_string const_str)
     else if Str.string_match int_regexp input 0 then
       (* extract the portion of the string that matched the input, and convert it to a Constant token *)
       let const_str = Str.matched_string input in
       ConstInt (Z.of_string const_str)
+    else if Str.string_match uint_regexp input 0 then
+      (* remove "u" suffix *)
+      let const_str = chop_suffix (Str.matched_string input) in
+      ConstUInt (Z.of_string const_str)
+    else if Str.string_match ulong_regexp input 0 then
+      (* remove ul/lu suffix *)
+      let const_str = chop_suffix ~n:2 (Str.matched_string input) in
+      ConstULong (Z.of_string const_str)
     else
       failwith
         ("Lexer failure: input starts with a digit but isn't a constant: "

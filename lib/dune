@@ -6,6 +6,7 @@
   ast
   assembly
   assembly_symbols
+  cnums
   codegen
   compile
   const
@@ -16,6 +17,7 @@
   instruction_fixup
   label_loops
   lex
+  num_interfaces
   parse
   replace_pseudos
   rounding
@@ -34,6 +36,6 @@
  (libraries ppx_deriving ppx_inline_test str camlp-streams zarith)
  (inline_tests)
  (preprocess
-  (pps ppx_deriving.show ppx_inline_test))
+  (pps ppx_deriving.show ppx_deriving.eq ppx_inline_test))
  (instrumentation
   (backend bisect_ppx)))
