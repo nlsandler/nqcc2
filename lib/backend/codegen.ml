@@ -1,4 +1,5 @@
 open Batteries
+open Cnums
 
 let param_passing_regs = Assembly.[ DI; SI; DX; CX; R8; R9 ]
 let zero = Assembly.Imm Int64.zero
@@ -6,22 +7,25 @@ let zero = Assembly.Imm Int64.zero
 let convert_val = function
   | Tacky.Constant (ConstInt i) -> Assembly.Imm (Int32.to_int64 i)
   | Tacky.Constant (ConstLong l) -> Imm l
+  | Tacky.Constant (ConstUInt u) -> Imm (UInt32.to_int64 u)
+  | Tacky.Constant (ConstULong ul) -> Imm (UInt64.to_int64 ul)
   | Tacky.Var v -> Assembly.Pseudo v
 
 let convert_type = function
-  | Types.Int -> Assembly.Longword
-  | Long -> Quadword
+  | Types.Int | UInt -> Assembly.Longword
+  | Long | ULong -> Quadword
   | FunType _ ->
       failwith "Internal error, converting function type to assembly"
       [@coverage off]
 
-let asm_type = function
-  | Tacky.Constant (ConstLong _) -> Assembly.Quadword
-  | Tacky.Constant (ConstInt _) -> Longword
+let tacky_type = function
+  | Tacky.Constant c -> Const.type_of_const c
   | Tacky.Var v -> (
-      try convert_type (Symbols.get v).t
+      try (Symbols.get v).t
       with Not_found ->
         failwith ("Internal error: " ^ v ^ " not in symbol table"))
+
+let asm_type = convert_type % tacky_type
 
 let convert_unop = function
   | Tacky.Complement -> Assembly.Not
@@ -36,22 +40,30 @@ let convert_binop = function
   | Tacky.Multiply -> Assembly.Mult
   | Tacky.(
       ( Divide | Mod | Equal | NotEqual | GreaterOrEqual | LessOrEqual
-      | GreaterThan | LessThan )) ->
-      failwith "Internal error: not a binary assembly instruction"
-      [@coverage off]
+      | GreaterThan | LessThan | BitshiftLeft | BitshiftRight )) ->
+      failwith
+        "Internal error: shouldn't be converted to binary assembly instruction \
+         here" [@coverage off]
   | Tacky.BitwiseAnd -> Assembly.And
   | Tacky.BitwiseOr -> Assembly.Or
   | Tacky.BitwiseXor -> Assembly.Xor
-  | Tacky.BitshiftLeft -> Assembly.Sal
-  | Tacky.BitshiftRight -> Assembly.Sar
 
-let convert_cond_code = function
+let convert_shift_op signed = function
+  (* NOTE: Sal/Shl are actually the same operation;
+   * we use different mnemonics for symmetry with Sar/Shr, which are distinct
+   *)
+  | Tacky.BitshiftLeft -> if signed then Assembly.Sal else Assembly.Shl
+  | Tacky.BitshiftRight -> if signed then Assembly.Sar else Assembly.Shr
+  | _ ->
+      failwith "Internal error: not a bitwise shift operation" [@coverage off]
+
+let convert_cond_code signed = function
   | Tacky.Equal -> Assembly.E
   | Tacky.NotEqual -> Assembly.NE
-  | Tacky.GreaterThan -> Assembly.G
-  | Tacky.GreaterOrEqual -> Assembly.GE
-  | Tacky.LessThan -> Assembly.L
-  | Tacky.LessOrEqual -> Assembly.LE
+  | Tacky.GreaterThan -> if signed then Assembly.G else Assembly.A
+  | Tacky.GreaterOrEqual -> if signed then Assembly.GE else Assembly.AE
+  | Tacky.LessThan -> if signed then Assembly.L else Assembly.B
+  | Tacky.LessOrEqual -> if signed then Assembly.LE else Assembly.BE
   | _ -> failwith "Internal error: not a condition code" [@coverage off]
 
 let convert_function_call f args dst =
@@ -156,7 +168,8 @@ let convert_instruction = function
       (* Relational operator *)
       | Equal | NotEqual | GreaterThan | GreaterOrEqual | LessThan | LessOrEqual
         ->
-          let cond_code = convert_cond_code op in
+          let signed = Type_utils.is_signed (tacky_type src1) in
+          let cond_code = convert_cond_code signed op in
           [
             Cmp (src_t, asm_src2, asm_src1);
             Mov (dst_t, zero, asm_dst);
@@ -165,14 +178,23 @@ let convert_instruction = function
       (* Division/modulo *)
       | Divide | Mod ->
           let result_reg = if op = Divide then Assembly.AX else DX in
-          [
-            Mov (src_t, asm_src1, Reg AX);
-            Cdq src_t;
-            Idiv (src_t, asm_src2);
-            Mov (src_t, Reg result_reg, asm_dst);
-          ]
+          if Type_utils.is_signed (tacky_type src1) then
+            [
+              Mov (src_t, asm_src1, Reg AX);
+              Cdq src_t;
+              Assembly.Idiv (src_t, asm_src2);
+              Mov (src_t, Reg result_reg, asm_dst);
+            ]
+          else
+            [
+              Mov (src_t, asm_src1, Reg AX);
+              Mov (src_t, zero, Reg DX);
+              Assembly.Div (src_t, asm_src2);
+              Mov (src_t, Reg result_reg, asm_dst);
+            ]
       | BitshiftLeft | BitshiftRight -> (
-          let asm_op = convert_binop op in
+          let is_signed = Type_utils.is_signed (tacky_type src1) in
+          let asm_op = convert_shift_op is_signed op in
           let asm_t = asm_type src1 in
           match asm_src2 with
           | Imm _ ->
@@ -215,6 +237,10 @@ let convert_instruction = function
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
       [ Mov (Longword, asm_src, asm_dst) ]
+  | Tacky.ZeroExtend { src; dst } ->
+      let asm_src = convert_val src in
+      let asm_dst = convert_val dst in
+      [ MovZeroExtend (asm_src, asm_dst) ]
 
 let pass_params param_list =
   let register_params, stack_params = List.takedrop 6 param_list in

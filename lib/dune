@@ -2,21 +2,25 @@
 
 (library
  (name nqcc)
+ (inline_tests)
  (modules
   ast
   assembly
   assembly_symbols
+  cnums
   codegen
   collect_switch_cases
   compile
   const
   const_convert
   emit
+  extended_big_int
   identifier_resolution
   initializers
   instruction_fixup
   label_loops
   lex
+  num_interfaces
   parse
   replace_pseudos
   rounding
@@ -33,6 +37,6 @@
   validate_labels)
  (libraries batteries ppx_deriving ppx_inline_test camlp-streams)
  (preprocess
-  (pps ppx_deriving.show))
+  (pps ppx_deriving.show ppx_deriving.eq ppx_inline_test))
  (instrumentation
   (backend bisect_ppx)))

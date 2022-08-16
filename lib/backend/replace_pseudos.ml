@@ -46,6 +46,11 @@ let replace_pseudos_in_instruction state = function
       let state2, new_dst = replace_operand state1 dst in
       let new_movsx = Movsx (new_src, new_dst) in
       (state2, new_movsx)
+  | MovZeroExtend (src, dst) ->
+      let state1, new_src = replace_operand state src in
+      let state2, new_dst = replace_operand state1 dst in
+      let new_movzx = MovZeroExtend (new_src, new_dst) in
+      (state2, new_movzx)
       (* Replace dst of unary instruction *)
   | Unary (t, op, dst) ->
       let state1, new_dst = replace_operand state dst in
@@ -64,6 +69,9 @@ let replace_pseudos_in_instruction state = function
   | Idiv (t, op) ->
       let state1, new_op = replace_operand state op in
       (state1, Idiv (t, new_op))
+  | Div (t, op) ->
+      let state1, new_op = replace_operand state op in
+      (state1, Div (t, new_op))
   (* Ret instruction has no operands, doesn't need to be rewritten *)
   | SetCC (code, op) ->
       let state1, new_op = replace_operand state op in

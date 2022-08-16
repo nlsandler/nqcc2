@@ -17,11 +17,8 @@ let create_tmp t =
   name
 
 let mk_const t i =
-  match t with
-  | Types.Int -> Const.ConstInt (Int32.of_int i)
-  | Types.Long -> ConstLong (Int64.of_int i)
-  | Types.FunType _ ->
-      failwith "Internal error: can't make constant of fun type"
+  let as_int = Const.ConstInt (Int32.of_int i) in
+  Const_convert.const_convert t as_int
 
 let mk_ast_const t i = Ast.{ e = Constant (mk_const t i); t }
 
@@ -115,16 +112,19 @@ and emit_cast_expression target_type inner =
   else
     let dst_name = create_tmp target_type in
     let dst = T.Var dst_name in
-    let cast_instruction = get_cast_instruction result dst target_type in
+    let cast_instruction =
+      get_cast_instruction result dst src_type target_type
+    in
     (eval_inner @ [ cast_instruction ], dst)
 
-and get_cast_instruction src dst dst_t =
+and get_cast_instruction src dst src_t dst_t =
   (* NOTE: assumes src and dst have different types *)
-  match dst_t with
-  | Types.Long -> T.SignExtend { src; dst }
-  | Types.Int -> T.Truncate { src; dst }
-  | Types.FunType _ ->
-      failwith "Internal error: cast to function type" [@coverage off]
+  if Type_utils.get_size dst_t = Type_utils.get_size src_t then
+    T.Copy { src; dst }
+  else if Type_utils.get_size dst_t < Type_utils.get_size src_t then
+    Truncate { src; dst }
+  else if Type_utils.is_signed src_t then T.SignExtend { src; dst }
+  else T.ZeroExtend { src; dst }
 
 and emit_binary_expression t op e1 e2 =
   let eval_v1, v1 = emit_tacky_for_exp e1 in
@@ -161,12 +161,12 @@ and emit_compound_expression ~op ~lhs ~rhs ~result_t =
        * lhs = <cast tmp to lhs.type>
        *)
       let tmp = T.Var (create_tmp result_t) in
-      let cast_lhs_to_tmp = get_cast_instruction dst tmp result_t in
+      let cast_lhs_to_tmp = get_cast_instruction dst tmp lhs.t result_t in
       let binary_instr =
         T.Binary { op = tacky_op; src1 = tmp; src2 = rhs; dst = tmp }
       in
 
-      let cast_tmp_to_lhs = get_cast_instruction tmp dst lhs.t in
+      let cast_tmp_to_lhs = get_cast_instruction tmp dst result_t lhs.t in
       [ cast_lhs_to_tmp; binary_instr; cast_tmp_to_lhs ]
   in
   (eval_rhs @ operation_and_assignment, dst)
