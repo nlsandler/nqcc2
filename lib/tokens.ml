@@ -11,11 +11,13 @@ type t =
   | ConstLong of Big_int.big_int
   | ConstUInt of Big_int.big_int
   | ConstULong of Big_int.big_int
+  | ConstDouble of Cnums.Float.t
   (* Keywords *)
   | KWInt
   | KWLong
   | KWSigned
   | KWUnsigned
+  | KWDouble
   | KWReturn
   | KWVoid
   | KWIf

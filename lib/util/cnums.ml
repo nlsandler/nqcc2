@@ -1,6 +1,16 @@
 include Num_interfaces
 open Batteries
 
+module Float = struct
+  include Batteries.Float
+
+  [@@@coverage off]
+
+  type t = float [@@deriving show]
+
+  [@@@coverage on]
+end
+
 module UInt32 : NumLike = struct
   [@@@coverage off]
 
@@ -9,6 +19,13 @@ module UInt32 : NumLike = struct
   [@@@coverage on]
 
   let zero = Int32.zero
+
+  let to_int x =
+    match Int32.unsigned_to_int x with
+    | Some i -> i
+    | None -> failwith "this should never happen!" [@coverage off]
+
+  let to_float = Int.to_float % to_int
   let of_int32 x = x
   let to_int32 x = x
   let of_int64 = Int32.of_int64
@@ -33,6 +50,20 @@ module UInt64 : NumLike = struct
   [@@@coverage on]
 
   let zero = Int64.zero
+
+  let to_int x =
+    match Int64.unsigned_to_int x with
+    | Some i -> i
+    | None -> failwith "out of range"
+
+  let to_float x =
+    if Int64.compare x Int64.zero >= 0 then Int64.to_float x
+    else
+      let open Big_int.Infix in
+      let bi = Big_int.big_int_of_int64 x in
+      let bigint_as_uint = bi + (Big_int.of_int 2 ** Big_int.of_int 64) in
+      Big_int.float_of_big_int bigint_as_uint
+
   let of_int32 = Int64.of_int32
   let to_int32 = Int64.to_int32
   let of_int64 x = x

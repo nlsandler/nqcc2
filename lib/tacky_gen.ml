@@ -72,13 +72,25 @@ and emit_cast_expression target_type inner =
     let dst_name = create_tmp target_type in
     let dst = T.Var dst_name in
     let cast_instruction =
-      if Type_utils.get_size target_type = Type_utils.get_size inner_type then
-        T.Copy { src = result; dst }
-      else if Type_utils.get_size target_type < Type_utils.get_size inner_type
-      then Truncate { src = result; dst }
-      else if Type_utils.is_signed inner_type then
-        T.SignExtend { src = result; dst }
-      else T.ZeroExtend { src = result; dst }
+      match (target_type, inner_type) with
+      | Double, _ ->
+          if Type_utils.is_signed inner_type then
+            T.IntToDouble { src = result; dst }
+          else T.UIntToDouble { src = result; dst }
+      | _, Double ->
+          if Type_utils.is_signed target_type then
+            T.DoubleToInt { src = result; dst }
+          else T.DoubleToUInt { src = result; dst }
+      | _ ->
+          (* cast b/t int types *)
+          if Type_utils.get_size target_type = Type_utils.get_size inner_type
+          then T.Copy { src = result; dst }
+          else if
+            Type_utils.get_size target_type < Type_utils.get_size inner_type
+          then Truncate { src = result; dst }
+          else if Type_utils.is_signed inner_type then
+            T.SignExtend { src = result; dst }
+          else T.ZeroExtend { src = result; dst }
     in
     let instructions = eval_inner @ [ cast_instruction ] in
     (instructions, dst)
