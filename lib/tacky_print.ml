@@ -1,3 +1,4 @@
+open Unsigned
 open Tacky
 
 let comma_sep out () = Format.fprintf out ", "
@@ -23,6 +24,8 @@ let pp_binary_operator out = function
 let const_to_string = function
   | Const.ConstInt i -> Int32.to_string i
   | ConstLong l -> Int64.to_string l ^ "l"
+  | ConstUInt ui -> UInt32.to_string ui ^ "u"
+  | ConstULong ul -> UInt64.to_string ul ^ "ul"
 
 let pp_tacky_val out = function
   | Constant i -> Format.pp_print_string out (const_to_string i)
@@ -52,6 +55,8 @@ let pp_instruction out = function
         args
   | SignExtend { src; dst } ->
       Format.fprintf out "%a = SignExtend(%a)" pp_tacky_val dst pp_tacky_val src
+  | ZeroExtend { src; dst } ->
+      Format.fprintf out "%a = ZeroExtend(%a)" pp_tacky_val dst pp_tacky_val src
   | Truncate { src; dst } ->
       Format.fprintf out "%a = Truncate(%a)" pp_tacky_val dst pp_tacky_val src
 

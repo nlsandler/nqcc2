@@ -43,6 +43,8 @@ let convert_identifier = function
   | "static" -> T.KWStatic
   | "extern" -> T.KWExtern
   | "long" -> T.KWLong
+  | "unsigned" -> T.KWUnsigned
+  | "signed" -> T.KWSigned
   | other -> T.Identifier other
 
 let convert_int s = T.ConstInt (Z.of_string s)
@@ -51,6 +53,16 @@ let convert_long s =
   (* drop "l" suffix *)
   let const_str = StringUtil.chop_suffix s in
   T.ConstLong (Z.of_string const_str)
+
+let convert_uint s =
+  (* drop "u" suffix *)
+  let const_str = StringUtil.chop_suffix s in
+  T.ConstUInt (Z.of_string const_str)
+
+let convert_ulong s =
+  (* remove ul/lu suffix *)
+  let const_str = StringUtil.chop_suffix ~n:2 s in
+  T.ConstULong (Z.of_string const_str)
 
 (** List of token definitions
 
@@ -69,6 +81,8 @@ let token_defs =
     (* constants *)
     def {_|[0-9]+\b|_} convert_int;
     def {_|[0-9]+[lL]\b|_} convert_long;
+    def {_|[0-9]+[uU]\b|_} convert_uint;
+    def {_|[0-9]+([lL][uU]|[uU][lL])\b|_} convert_ulong;
     (* punctuation *)
     def {_|\(|_} (literal T.OpenParen);
     def {_|\)|_} (literal T.CloseParen);

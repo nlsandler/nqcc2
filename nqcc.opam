@@ -19,6 +19,7 @@ depends: [
   "camlp-streams"
   "re"
   "zarith"
+  "integers"
   "odoc" {with-doc}
 ]
 build: [

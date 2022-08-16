@@ -31,7 +31,7 @@
   settings
   unique_ids
   utils)
- (libraries re camlp-streams zarith)
+ (libraries re camlp-streams zarith integers)
  (preprocess
   (pps ppx_deriving.show))
  (instrumentation

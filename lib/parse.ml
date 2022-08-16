@@ -1,3 +1,5 @@
+open Unsigned
+
 module T = struct
   include Tokens
 end
@@ -47,9 +49,11 @@ module Private = struct
   (*** Specifiers ***)
 
   (* Helper function to check whether a token is a type specifier *)
-  let is_type_specifier = function T.KWInt | T.KWLong -> true | _ -> false
+  let is_type_specifier = function
+    | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned -> true
+    | _ -> false
 
-  (* <type-specifier> ::= "int" | "long" *)
+  (* <type-specifier> ::= "int" | "long" | "unsigned" | "signed" *)
   let parse_type_specifier tokens =
     let spec = Tok_stream.take_token tokens in
     if is_type_specifier spec then spec
@@ -91,12 +95,21 @@ module Private = struct
     | other ->
         raise_error ~expected:(Name "a storage class specifier") ~actual:other
 
-  (* Convert list of specifiers to a type (Listing 11-4) *)
+  (* Convert list of specifiers to a type (Listing 12-3). *)
   let parse_type specifier_list =
-    match specifier_list with
-    | [ T.KWInt ] -> Types.Int
-    | [ T.KWInt; T.KWLong ] | [ T.KWLong; T.KWInt ] | [ T.KWLong ] -> Types.Long
-    | _ -> raise (ParseError "Invalid type specifier")
+    if
+      specifier_list = []
+      || List.sort_uniq compare specifier_list
+         <> List.sort compare specifier_list
+      || List.mem T.KWSigned specifier_list
+         && List.mem T.KWUnsigned specifier_list
+    then raise (ParseError "Invalid type specifier")
+    else if
+      List.mem T.KWUnsigned specifier_list && List.mem T.KWLong specifier_list
+    then Types.ULong
+    else if List.mem T.KWUnsigned specifier_list then Types.UInt
+    else if List.mem T.KWLong specifier_list then Types.Long
+    else Types.Int
 
   (* Convert list of specifiers to type and storage class (Listing 11-5) *)
   let parse_type_and_storage_class specifier_list =
@@ -114,17 +127,15 @@ module Private = struct
 
   (*** Constants ***)
 
-  (* <const> ::= <int> | <long>
+  (* Convert a signed constant token to a constant AST node (Listing 11-6). *)
 
-     Convert a single token into constant AST node (Listing 11-6). Note that
-     this is slightly different than most parse_* functions because it takes one
-     token instead of a token stream. *)
-  let parse_constant token =
+  let parse_signed_constant token =
     let v, is_int =
       match token with
       | T.ConstInt i -> (i, true)
       | T.ConstLong l -> (l, false)
-      | other -> raise_error ~expected:(Name "a constant") ~actual:other
+      | other ->
+          raise_error ~expected:(Name "a signed integer constant") ~actual:other
     in
     (* ~$2, etc are literals of type Z.t (an arbitrary-precision type) *)
     if Z.(gt v ((~$2 ** 63) - ~$1)) then
@@ -132,6 +143,38 @@ module Private = struct
     else if is_int && Z.(leq v ((~$2 ** 31) - ~$1)) then
       Const.ConstInt (Z.to_int32 v)
     else Const.ConstLong (Z.to_int64 v)
+
+  (* Convert an unsigned constant token to a Const.t. (Analogous to Listing
+     11-6.) *)
+  let parse_unsigned_constant token =
+    let v, is_uint =
+      match token with
+      | T.ConstUInt ui -> (ui, true)
+      | T.ConstULong ul -> (ul, false)
+      | other ->
+          raise_error ~expected:(Name "an unsigned integer  constant")
+            ~actual:other
+    in
+    (* ~$2, etc are literals of type Z.t (an arbitrary-precision type) *)
+    if Z.(gt v ((~$2 ** 64) - ~$1)) then
+      raise
+        (ParseError
+           "Constant is too large to represent as an unsigned int or unsigned \
+            long")
+    else if is_uint && Z.(leq v ((~$2 ** 32) - ~$1)) then
+      Const.ConstUInt (UInt32.of_int32 (Z.to_int32_unsigned v))
+    else Const.ConstULong (UInt64.of_int64 (Z.to_int64_unsigned v))
+
+  (* <const> ::= <int> | <long> | <uint> | <ulong>
+
+     Just remove the next token from the stream and pass it off to the
+     appropriate helper function to convert it to a Const.t *)
+  let parse_const tokens =
+    let const_tok = Tok_stream.take_token tokens in
+    match const_tok with
+    | T.ConstInt _ | T.ConstLong _ -> parse_signed_constant const_tok
+    | T.ConstUInt _ | T.ConstULong _ -> parse_unsigned_constant const_tok
+    | other -> raise_error ~expected:(Name "a constant token") ~actual:other
 
   (*** Expressions ***)
 
@@ -184,9 +227,8 @@ module Private = struct
     let next_token = Tok_stream.peek tokens in
     match next_token with
     (* constant *)
-    | T.ConstInt _ | T.ConstLong _ ->
-        let tok = Tok_stream.take_token tokens in
-        Ast.Constant (parse_constant tok)
+    | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _ ->
+        Ast.Constant (parse_const tokens)
     (* variable or function call *)
     | T.Identifier _ ->
         let id = parse_id tokens in
