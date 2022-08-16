@@ -1,5 +1,15 @@
 include Num_interfaces
 
+module Float = struct
+  include Float
+
+  [@@@coverage off]
+
+  type t = float [@@deriving show]
+
+  [@@@coverage on]
+end
+
 module UInt32 : NumLike = struct
   [@@@coverage off]
 
@@ -8,6 +18,13 @@ module UInt32 : NumLike = struct
   [@@@coverage on]
 
   let zero = Int32.zero
+
+  let to_int x =
+    match Int32.unsigned_to_int x with
+    | Some i -> i
+    | None -> failwith "this should never happen!" [@coverage off]
+
+  let to_float x = Int.to_float (to_int x)
   let of_int32 x = x
   let to_int32 x = x
   let of_int64 x = Int64.to_int32 x
@@ -39,6 +56,16 @@ module UInt64 : NumLike = struct
   [@@@coverage on]
 
   let zero = Int64.zero
+
+  let to_int x =
+    match Int64.unsigned_to_int x with
+    | Some i -> i
+    | None -> failwith "out of range"
+
+  let to_float x =
+    if Int64.compare x Int64.zero >= 0 then Int64.to_float x
+    else Z.to_float (Z.of_int64_unsigned x)
+
   let of_int32 = Int64.of_int32
   let to_int32 = Int64.to_int32
   let of_int64 x = x

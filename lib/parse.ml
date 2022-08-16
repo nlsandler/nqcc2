@@ -52,7 +52,7 @@ let get_precedence = function
 (* getting a list of specifiers *)
 
 let is_type_specifier = function
-  | T.KWInt | KWLong | KWUnsigned | KWSigned -> true
+  | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble -> true
   | _ -> false
 
 let is_specifier = function
@@ -77,9 +77,11 @@ let parse_storage_class = function
   | _ -> failwith "Internal error: bad storage class" [@coverage off]
 
 let parse_type specifier_list =
-  if
+  if specifier_list = [ T.KWDouble ] then Types.Double
+  else if
     specifier_list = []
     || List.sort_uniq compare specifier_list <> List.sort compare specifier_list
+    || List.mem T.KWDouble specifier_list
     || List.mem T.KWSigned specifier_list
        && List.mem T.KWUnsigned specifier_list
   then failwith "Invalid type specifier"
@@ -115,6 +117,7 @@ let parse_id tokens =
 let parse_constant tokens =
   try
     match Stream.next tokens with
+    | T.ConstDouble d -> Const.ConstDouble d
     | T.ConstInt c -> (
         try Const.ConstInt (Z.to_int32 c)
         with Z.Overflow -> ConstLong (Z.to_int64 c))
@@ -169,7 +172,8 @@ let rec parse_factor tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
-  | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _ ->
+  | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _
+  | T.ConstDouble _ ->
       Ast.Constant (parse_constant tokens)
   (* identifier *)
   | T.Identifier _ -> (

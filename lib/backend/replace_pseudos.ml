@@ -78,6 +78,16 @@ let replace_pseudos_in_instruction state = function
   | Push op ->
       let state1, new_op = replace_operand state op in
       (state1, Push new_op)
+  | Cvttsd2si (t, src, dst) ->
+      let state1, new_src = replace_operand state src in
+      let state2, new_dst = replace_operand state1 dst in
+      let new_cvt = Cvttsd2si (t, new_src, new_dst) in
+      (state2, new_cvt)
+  | Cvtsi2sd (t, src, dst) ->
+      let state1, new_src = replace_operand state src in
+      let state2, new_dst = replace_operand state1 dst in
+      let new_cvt = Cvtsi2sd (t, new_src, new_dst) in
+      (state2, new_cvt)
   | (Ret | Cdq _ | Label _ | JmpCC _ | Jmp _ | Call _) as other -> (state, other)
 
 let replace_pseudos_in_tl = function

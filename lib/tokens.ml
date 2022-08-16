@@ -7,11 +7,13 @@ type t =
   | ConstLong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   | ConstUInt of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   | ConstULong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
+  | ConstDouble of Cnums.Float.t
   (* Keywords *)
   | KWInt
   | KWLong
   | KWSigned
   | KWUnsigned
+  | KWDouble
   | KWReturn
   | KWVoid
   | KWIf

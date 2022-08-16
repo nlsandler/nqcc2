@@ -25,6 +25,7 @@ let const_to_string = function
   | ConstLong l -> Int64.to_string l ^ "l"
   | ConstUInt ui -> Cnums.UInt32.to_string ui ^ "u"
   | ConstULong ul -> Cnums.UInt64.to_string ul ^ "ul"
+  | ConstDouble d -> Float.to_string d
 
 let pp_tacky_val out = function
   | Constant i -> Format.pp_print_string out (const_to_string i)
@@ -58,6 +59,18 @@ let pp_instruction out = function
       Format.fprintf out "%a = ZeroExtend(%a)" pp_tacky_val dst pp_tacky_val src
   | Truncate { src; dst } ->
       Format.fprintf out "%a = Truncate(%a)" pp_tacky_val dst pp_tacky_val src
+  | DoubleToInt { src; dst } ->
+      Format.fprintf out "%a = DoubleToInt(%a)" pp_tacky_val dst pp_tacky_val
+        src
+  | DoubleToUInt { src; dst } ->
+      Format.fprintf out "%a = DoubleToUInt(%a)" pp_tacky_val dst pp_tacky_val
+        src
+  | IntToDouble { src; dst } ->
+      Format.fprintf out "%a = IntToDouble(%a)" pp_tacky_val dst pp_tacky_val
+        src
+  | UIntToDouble { src; dst } ->
+      Format.fprintf out "%a = UIntToDouble(%a)" pp_tacky_val dst pp_tacky_val
+        src
 
 let pp_function_definition global name params out body =
   Format.pp_open_vbox out 0;

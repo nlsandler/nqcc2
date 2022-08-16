@@ -2,10 +2,14 @@ open Tokens
 
 (* regular expressions for tokens *)
 let id_regexp = Str.regexp {|[A-Za-z_][A-Za-z0-9_]*\b|}
-let int_regexp = Str.regexp {|[0-9]+\b|}
-let long_regexp = Str.regexp {|[0-9]+[lL]\b|}
-let uint_regexp = Str.regexp {|[0-9]+[uU]\b|}
-let ulong_regexp = Str.regexp {|[0-9]+\([uU][lL]\|[lL][uU]\)\b|}
+let int_regexp = Str.regexp {|\([0-9]+\)[^A-Za-z0-9_.]|}
+let long_regexp = Str.regexp {|\([0-9]+[lL]\)[^A-Za-z0-9_.]|}
+let uint_regexp = Str.regexp {|\([0-9]+[uU]\)[^A-Za-z0-9_.]|}
+let ulong_regexp = Str.regexp {|\([0-9]+\([uU][lL]\|[lL][uU]\)\)[^A-Za-z0-9_.]|}
+
+let double_regexp =
+  Str.regexp
+    {|\(\([0-9]*\.[0-9]+\|[0-9]+\.?\)[Ee][+-]?[0-9]+\|[0-9]*\.[0-9]+\|[0-9]+\.\)[^A-Za-z0-9_.]|}
 
 let id_to_tok = function
   | "int" -> KWInt
@@ -23,6 +27,7 @@ let id_to_tok = function
   | "long" -> KWLong
   | "unsigned" -> KWUnsigned
   | "signed" -> KWSigned
+  | "double" -> KWDouble
   | other -> Identifier other
 
 (* whitespace characters: space, tab, newline, vertical tab, form feed *)
@@ -68,34 +73,38 @@ let rec lex_helper chars =
     | ':' :: _ -> Colon :: lex_helper (drop_first chars)
     | ',' :: _ -> Comma :: lex_helper (drop_first chars)
     | c :: _ when is_whitespace c -> lex_helper (drop_first chars)
-    | c :: _ when is_digit c -> lex_constant chars
+    | c :: _ when is_digit c || c = '.' -> lex_constant chars
     | _ -> lex_identifier chars
 
 and lex_constant input =
   let tok =
     if Str.string_match long_regexp input 0 then
       (* extract the portion of the string that matched the input, except the l suffix, and convert it to a Constant token *)
-      let const_str = chop_suffix (Str.matched_string input) in
+      let const_str = chop_suffix (Str.matched_group 1 input) in
       ConstLong (Z.of_string const_str)
     else if Str.string_match int_regexp input 0 then
       (* extract the portion of the string that matched the input, and convert it to a Constant token *)
-      let const_str = Str.matched_string input in
+      let const_str = Str.matched_group 1 input in
       ConstInt (Z.of_string const_str)
     else if Str.string_match uint_regexp input 0 then
       (* remove "u" suffix *)
-      let const_str = chop_suffix (Str.matched_string input) in
+      let const_str = chop_suffix (Str.matched_group 1 input) in
       ConstUInt (Z.of_string const_str)
     else if Str.string_match ulong_regexp input 0 then
       (* remove ul/lu suffix *)
-      let const_str = chop_suffix ~n:2 (Str.matched_string input) in
+      let const_str = chop_suffix ~n:2 (Str.matched_group 1 input) in
       ConstULong (Z.of_string const_str)
+    else if Str.string_match double_regexp input 0 then
+      (* remove ul/lu suffix *)
+      let const_str = Str.matched_group 1 input in
+      ConstDouble (Float.of_string const_str)
     else
       failwith
         ("Lexer failure: input starts with a digit but isn't a constant: "
         ^ input)
   in
-  (* remaining is the rest of the input after the substring that matched the regex *)
-  let remaining = Str.string_after input (Str.match_end ()) in
+  (* remaining is the rest of the input after the match group in the regex *)
+  let remaining = Str.string_after input (Str.group_end 1) in
   tok :: lex_helper remaining
 
 and lex_identifier input =
