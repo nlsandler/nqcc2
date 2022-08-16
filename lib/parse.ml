@@ -50,7 +50,7 @@ module Private = struct
 
   (* Helper function to check whether a token is a type specifier *)
   let is_type_specifier = function
-    | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned -> true
+    | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned | KWDouble -> true
     | _ -> false
 
   (* <type-specifier> ::= "int" | "long" | "unsigned" | "signed" *)
@@ -95,12 +95,14 @@ module Private = struct
     | other ->
         raise_error ~expected:(Name "a storage class specifier") ~actual:other
 
-  (* Convert list of specifiers to a type (Listing 12-3). *)
+  (* Convert list of specifiers to a type (Listing 13-10). *)
   let parse_type specifier_list =
-    if
+    if specifier_list = [ T.KWDouble ] then Types.Double
+    else if
       specifier_list = []
       || List.sort_uniq compare specifier_list
          <> List.sort compare specifier_list
+      || List.mem T.KWDouble specifier_list
       || List.mem T.KWSigned specifier_list
          && List.mem T.KWUnsigned specifier_list
     then raise (ParseError "Invalid type specifier")
@@ -174,6 +176,7 @@ module Private = struct
     match const_tok with
     | T.ConstInt _ | T.ConstLong _ -> parse_signed_constant const_tok
     | T.ConstUInt _ | T.ConstULong _ -> parse_unsigned_constant const_tok
+    | T.ConstDouble d -> Const.ConstDouble d
     | other -> raise_error ~expected:(Name "a constant token") ~actual:other
 
   (*** Expressions ***)
@@ -227,7 +230,8 @@ module Private = struct
     let next_token = Tok_stream.peek tokens in
     match next_token with
     (* constant *)
-    | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _ ->
+    | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _
+    | T.ConstDouble _ ->
         Ast.Constant (parse_const tokens)
     (* variable or function call *)
     | T.Identifier _ ->

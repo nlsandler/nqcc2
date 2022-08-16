@@ -14,6 +14,7 @@ let convert_to e target_type =
 
 let get_common_type t1 t2 =
   if t1 = t2 then t1
+  else if t1 = Types.Double || t2 = Double then Double
   else if get_size t1 = get_size t2 then if is_signed t1 then t2 else t1
   else if get_size t1 > get_size t2 then t1
   else t2
@@ -52,6 +53,8 @@ and typecheck_unary op inner =
   let unary_exp = T.Unary (op, typed_inner) in
   match op with
   | Not -> set_type unary_exp Int
+  | Complement when get_type typed_inner = Double ->
+      failwith "Can't apply bitwise complement to double"
   | _ -> set_type unary_exp (get_type typed_inner)
 
 and typecheck_binary op e1 e2 =
@@ -69,6 +72,7 @@ and typecheck_binary op e1 e2 =
       let converted_e2 = convert_to typed_e2 common_type in
       let binary_exp = T.Binary (op, converted_e1, converted_e2) in
       match op with
+      | Mod when common_type = Double -> failwith "Can't apply % to double"
       | Add | Subtract | Multiply | Divide | Mod ->
           set_type binary_exp common_type
       | _ -> set_type binary_exp Int)
@@ -124,6 +128,7 @@ let to_static_init var_type = function
         | ConstLong l -> Initializers.LongInit l
         | ConstUInt u -> Initializers.UIntInit u
         | ConstULong ul -> Initializers.ULongInit ul
+        | ConstDouble d -> Initializers.DoubleInit d
       in
       Symbols.Initial init_val
   | _ -> failwith "Non-constant initializer on static variable"

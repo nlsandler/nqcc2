@@ -15,6 +15,8 @@ type static_init =
   | ULongInit of UInt64.t
       [@printer
         fun fmt ul -> Format.pp_print_string fmt (UInt64.to_string ul ^ "ul")]
+  | DoubleInit of Float.t
+      [@printer fun fmt dbl -> Format.pp_print_string fmt (Float.to_string dbl)]
 [@@deriving show]
 
 [@@@coverage on]
@@ -24,6 +26,7 @@ let zero = function
   | Long -> LongInit Int64.zero
   | UInt -> UIntInit UInt32.zero
   | ULong -> ULongInit UInt64.zero
+  | Double -> DoubleInit Float.zero
   | FunType _ ->
       failwith "Internal error: zero doesn't make sense for function type"
       [@coverage off]
@@ -33,3 +36,6 @@ let is_zero = function
   | LongInit l -> l = Int64.zero
   | UIntInit u -> u = UInt32.zero
   | ULongInit ul -> ul = UInt64.zero
+  (* NOTE: consider all doubles non-zero since we don't know if it's zero or
+     negative zero *)
+  | DoubleInit _ -> false

@@ -39,19 +39,21 @@ let compile stage preprocessed_src =
   run_command "rm" [ preprocessed_src ];
   replace_extension preprocessed_src ".s"
 
-let assemble_and_link ?(link = true) ?(cleanup = true) src =
+let assemble_and_link ?(link = true) ?(cleanup = true) ?(libs = []) src =
   let link_option = if link then [] else [ "-c" ] in
+  let lib_options = List.map (fun l -> "-l" ^ l) libs in
   let assembly_file = replace_extension src ".s" in
   let output_file =
     if link then Filename.chop_extension src else replace_extension src ".o"
   in
   let _ =
-    run_command "gcc" (link_option @ [ assembly_file; "-o"; output_file ])
+    run_command "gcc"
+      (link_option @ [ assembly_file ] @ lib_options @ [ "-o"; output_file ])
   in
   (* cleanup .s files *)
   if cleanup then run_command "rm" [ assembly_file ]
 
-let driver target debug stage src =
+let driver target debug libs stage src =
   let _ =
     Settings.platform := target;
     Settings.debug := debug
@@ -60,7 +62,7 @@ let driver target debug stage src =
   let assembly_name = compile stage preprocessed_name in
   match stage with
   | Settings.Executable ->
-      assemble_and_link ~link:true ~cleanup:(not debug) assembly_name
+      assemble_and_link ~link:true ~cleanup:(not debug) ~libs assembly_name
   | Settings.Obj ->
       assemble_and_link ~link:false ~cleanup:(not debug) assembly_name
   | _ -> ()
@@ -100,6 +102,10 @@ let stage =
     & vflag Settings.Executable
         [ lex; parse; validate; tacky; obj; codegen; assembly ])
 
+let libs =
+  let doc = "Link against library (passed through to assemble/link command)" in
+  Arg.(value & opt_all Arg.string [] & info [ "l" ] ~doc)
+
 let target =
   let doc = "Choose target platform" in
   let target = Arg.enum [ ("linux", Settings.Linux); ("osx", Settings.OS_X) ] in
@@ -118,7 +124,7 @@ let src_file =
 let cmd =
   let doc = "A not-quite-C compiler" in
   let info = Cmd.info "nqcc" ~doc in
-  Cmd.v info Term.(const driver $ target $ debug $ stage $ src_file)
+  Cmd.v info Term.(const driver $ target $ debug $ libs $ stage $ src_file)
 
 let main () = exit (Cmd.eval cmd)
 let () = main ()

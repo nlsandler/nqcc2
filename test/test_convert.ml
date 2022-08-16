@@ -90,3 +90,53 @@ let%expect_test "ulong to uint" =
   let ul = Const.ConstULong (UInt64.of_string "1152921506754330624") in
   convert_and_print ~target_type:Types.UInt ul;
   [%expect "(Const.ConstUInt 2147483648)"]
+
+let%expect_test "double to long" =
+  let d = Const.ConstDouble 2148429099.3 in
+  convert_and_print ~target_type:Types.Long d;
+  [%expect "(Const.ConstLong 2148429099L)"]
+
+let%expect_test "double to int" =
+  let d = Const.ConstDouble (-200000.9999) in
+  convert_and_print ~target_type:Types.Long d;
+  [%expect "(Const.ConstLong -200000L)"]
+
+let%expect_test "double to uint" =
+  let d = Const.ConstDouble 2147483750.5 in
+  convert_and_print ~target_type:Types.UInt d;
+  [%expect "(Const.ConstUInt 2147483750)"]
+
+let%expect_test "double to ulong" =
+  let d = Const.ConstDouble 3458764513821589504.0 in
+  convert_and_print ~target_type:Types.ULong d;
+  [%expect "(Const.ConstULong 3458764513821589504)"]
+
+let%expect_test "int to double" =
+  let i = Const.ConstInt (-1000l) in
+  convert_and_print ~target_type:Types.Double i;
+  [%expect "(Const.ConstDouble -1000)"]
+
+let%expect_test "long to double" =
+  let l = Const.ConstLong (-9007199254751227L) in
+  convert_and_print ~target_type:Types.Double l;
+  [%expect "(Const.ConstDouble -9007199254751228)"]
+
+let%expect_test "uint to double" =
+  let ui = Const.ConstUInt (UInt32.of_int64 4294967200L) in
+  convert_and_print ~target_type:Types.Double ui;
+  [%expect "(Const.ConstDouble 4294967200)"]
+
+let%expect_test "ulong to double" =
+  let ul = Const.ConstULong (UInt64.of_string "138512825844") in
+  convert_and_print ~target_type:Types.Double ul;
+  [%expect "(Const.ConstDouble 138512825844)"]
+
+let%expect_test "ulong to double inexact" =
+  let ul = Const.ConstULong (UInt64.of_string "10223372036854775816") in
+  convert_and_print ~target_type:Types.Double ul;
+  [%expect "(Const.ConstDouble 10223372036854775808)"]
+
+let%expect_test "ulong to double round to odd" =
+  let ul = Const.ConstULong (UInt64.of_string "9223372036854776832") in
+  convert_and_print ~target_type:Types.Double ul;
+  [%expect "(Const.ConstDouble 9223372036854775808)"]

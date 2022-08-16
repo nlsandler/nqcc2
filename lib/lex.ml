@@ -8,6 +8,12 @@ exception LexError of string
 
 type token_def = {
   re : Re.re;  (** The regular expression to recognize a token *)
+  group : int;
+      (** The match group within the regular expression that matches just the
+          token itself (and not any subsequent tokens that we need to consider
+          to recognize the match). In the common case where we don't need to
+          look at subsequent tokens, this is group 0, which matches the whole
+          regex. For constants, this is group 1. *)
   converter : string -> Tokens.t;
       (** A function to convert the matched substring into a token *)
 }
@@ -15,7 +21,7 @@ type token_def = {
 
 type match_def = {
   matched_substring : string;
-      (** Substring matching the regex specified in token_def *)
+      (** Substring matching the capture group specified in token_def *)
   matching_token : token_def;  (** Which token it matched *)
 }
 (** A substring at the start of the input that matches a token *)
@@ -45,6 +51,7 @@ let convert_identifier = function
   | "long" -> T.KWLong
   | "unsigned" -> T.KWUnsigned
   | "signed" -> T.KWSigned
+  | "double" -> T.KWDouble
   | other -> T.Identifier other
 
 let convert_int s = T.ConstInt (Z.of_string s)
@@ -64,25 +71,31 @@ let convert_ulong s =
   let const_str = StringUtil.chop_suffix ~n:2 s in
   T.ConstULong (Z.of_string const_str)
 
+let convert_double s = T.ConstDouble (Float.of_string s)
+
 (** List of token definitions
 
     NOTE: we use OCaml quoted string literals like
     [{_|Here's my special string|_}], which are interpreted literally without
     escape sequences, so we can write e.g. \b instead of \\b. *)
 let token_defs =
-  (* Smart constructor to compile regex for token defs *)
-  let def re_str converter =
+  (* Smart constructor to compile regex for token defs and use 0 as default
+     group number if none is specified *)
+  let def ?(group = 0) re_str converter =
     (* `ANCHORED flag means only match at start of string *)
-    { re = Re.Pcre.regexp ~flags:[ `ANCHORED ] re_str; converter }
+    { re = Re.Pcre.regexp ~flags:[ `ANCHORED ] re_str; group; converter }
   in
   [
     (* all identifiers, including keywords *)
     def {_|[A-Za-z_][A-Za-z0-9_]*\b|_} convert_identifier;
     (* constants *)
-    def {_|[0-9]+\b|_} convert_int;
-    def {_|[0-9]+[lL]\b|_} convert_long;
-    def {_|[0-9]+[uU]\b|_} convert_uint;
-    def {_|[0-9]+([lL][uU]|[uU][lL])\b|_} convert_ulong;
+    def ~group:1 {_|([0-9]+)[^\w.]|_} convert_int;
+    def ~group:1 {_|([0-9]+[lL])[^\w.]|_} convert_long;
+    def ~group:1 {_|([0-9]+[uU])[^\w.]|_} convert_uint;
+    def ~group:1 {_|([0-9]+([lL][uU]|[uU][lL]))[^\w.]|_} convert_ulong;
+    def ~group:1
+      {_|(([0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)[^\w.]|_}
+      convert_double;
     (* punctuation *)
     def {_|\(|_} (literal T.OpenParen);
     def {_|\)|_} (literal T.CloseParen);
@@ -121,11 +134,12 @@ let find_match s tok_def =
   let maybe_match = Re.exec_opt re s in
   match maybe_match with
   | Some m ->
-      (* It matched! Now extract the matching substring.
-
-         [Re.Group.get m 0] returns group 0, i.e. the match for the whole
-         regex *)
-      Some { matched_substring = Re.Group.get m 0; matching_token = tok_def }
+      (* It matched! Now extract the matching substring. *)
+      Some
+        {
+          matched_substring = Re.Group.get m tok_def.group;
+          matching_token = tok_def;
+        }
   | None -> None
 
 (** Count number of leading whitespace characters in a string; return None if it

@@ -7,11 +7,14 @@ type t =
   | ConstLong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   | ConstUInt of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   | ConstULong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
+  | ConstDouble of Float.t
+      [@printer fun fmt dbl -> Format.pp_print_string fmt (Float.to_string dbl)]
   (* Keywords *)
   | KWInt
   | KWLong
   | KWSigned
   | KWUnsigned
+  | KWDouble
   | KWReturn
   | KWVoid
   | KWIf

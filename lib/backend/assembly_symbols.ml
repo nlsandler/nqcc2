@@ -1,6 +1,6 @@
 type entry =
   | Fun of { defined : bool; bytes_required : int }
-  | Obj of { t : Assembly.asm_type; is_static : bool }
+  | Obj of { t : Assembly.asm_type; is_static : bool; constant : bool }
 
 let (symbol_table : (string, entry) Hashtbl.t) = Hashtbl.create 20
 
@@ -8,7 +8,11 @@ let add_fun fun_name defined =
   Hashtbl.replace symbol_table fun_name (Fun { defined; bytes_required = 0 })
 
 let add_var var_name t is_static =
-  Hashtbl.replace symbol_table var_name (Obj { t; is_static })
+  Hashtbl.replace symbol_table var_name (Obj { t; is_static; constant = false })
+
+let add_constant const_name t =
+  Hashtbl.replace symbol_table const_name
+    (Obj { t; is_static = true; constant = true })
 
 let set_bytes_required fun_name bytes_required =
   if Hashtbl.mem symbol_table fun_name then
@@ -26,7 +30,7 @@ let get_bytes_required fun_name =
 let get_size var_name =
   match Hashtbl.find symbol_table var_name with
   | Obj { t = Longword; _ } -> 4
-  | Obj { t = Quadword; _ } -> 8
+  | Obj { t = Quadword | Double; _ } -> 8
   | Fun _ ->
       failwith "Internal error: this is a function, not an object"
       [@coverage off]
@@ -34,7 +38,7 @@ let get_size var_name =
 let get_alignment var_name =
   match Hashtbl.find symbol_table var_name with
   | Obj { t = Longword; _ } -> 4
-  | Obj { t = Quadword; _ } -> 8
+  | Obj { t = Quadword | Double; _ } -> 8
   | Fun _ ->
       failwith "Internal error: this is a function, not an object"
       [@coverage off]
@@ -49,4 +53,12 @@ let is_static var_name =
   | Obj o -> o.is_static
   | Fun _ ->
       failwith "Internal error: functions don't have storage duration"
+      [@coverage off]
+
+let is_constant name =
+  match Hashtbl.find symbol_table name with
+  | Obj { constant = true; _ } -> true
+  | Obj _ -> false
+  | Fun _ ->
+      failwith "Internal error: is_constant doesn't make sense for functions"
       [@coverage off]
