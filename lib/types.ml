@@ -5,5 +5,6 @@ type t =
   | Long
   | UInt
   | ULong
+  | Double
   | FunType of { param_types : t list; ret_type : t }
 [@@deriving show]
