@@ -37,8 +37,14 @@ let fixup_instruction = function
       [ Mov (Longword, src, Reg R10); Movsx (Reg R10, dst) ]
   | Movsx (src, ((Stack _ | Data _) as dst)) ->
       [ Movsx (src, Reg R11); Mov (Quadword, Reg R11, dst) ]
+  (* rewrite MovZerOExtend as one or two Mov instructions *)
+  | MovZeroExtend (src, dst) -> (
+      match dst with
+      | Reg _ -> [ Mov (Longword, src, dst) ]
+      | _ -> [ Mov (Longword, src, Reg R11); Mov (Quadword, Reg R11, dst) ])
   (* Idiv can't operate on constants *)
   | Idiv (t, Imm i) -> [ Mov (t, Imm i, Reg R10); Idiv (t, Reg R10) ]
+  | Div (t, Imm i) -> [ Mov (t, Imm i, Reg R10); Div (t, Reg R10) ]
   (* Add/Sub can't take large immediates as source operands *)
   | Binary { op = (Add | Sub) as op; t = Quadword; src = Imm i as src; dst }
     when is_large i ->

@@ -1,4 +1,5 @@
 open Assembly
+open Cnums
 
 let suffix = function Longword -> "l" | Quadword -> "q"
 
@@ -81,6 +82,10 @@ let show_cond_code = function
   | GE -> "ge"
   | L -> "l"
   | LE -> "le"
+  | A -> "a"
+  | AE -> "ae"
+  | B -> "b"
+  | BE -> "be"
 
 let emit_instruction chan = function
   | Mov (t, src, dst) ->
@@ -99,6 +104,8 @@ let emit_instruction chan = function
         (show_operand t dst)
   | Idiv (t, operand) ->
       Printf.fprintf chan "\tidiv%s %s\n" (suffix t) (show_operand t operand)
+  | Div (t, operand) ->
+      Printf.fprintf chan "\tdiv%s %s\n" (suffix t) (show_operand t operand)
   | Cdq Longword -> Printf.fprintf chan "\tcdq\n"
   | Cdq Quadword -> Printf.fprintf chan "\tcqo\n"
   | Jmp lbl -> Printf.fprintf chan "\tjmp %s\n" (show_local_label lbl)
@@ -121,18 +128,24 @@ let emit_instruction chan = function
     popq %%rbp
     ret
 |}
+  | MovZeroExtend _ ->
+      failwith
+        "Internal error: MovZeroExtend should have been removed in instruction \
+         rewrite pass" [@coverage off]
 
 let emit_global_directive chan global label =
   if global then Printf.fprintf chan "\t.globl %s\n" label else ()
 
 let emit_zero_init chan = function
-  | Initializers.IntInit _ -> Printf.fprintf chan "\t.zero 4\n"
-  | LongInit _ -> Printf.fprintf chan "\t.zero 8\n"
+  | Initializers.IntInit _ | UIntInit _ -> Printf.fprintf chan "\t.zero 4\n"
+  | LongInit _ | ULongInit _ -> Printf.fprintf chan "\t.zero 8\n"
 
 let emit_init chan = function
   | Initializers.IntInit i ->
       Printf.fprintf chan "\t.long %s\n" (Int32.to_string i)
   | LongInit l -> Printf.fprintf chan "\t.quad %s\n" (Int64.to_string l)
+  | UIntInit u -> Printf.fprintf chan "\t.long %s\n" (UInt32.to_string u)
+  | ULongInit l -> Printf.fprintf chan "\t.quad %s\n" (UInt64.to_string l)
 
 let emit_tl chan = function
   | Function { name; global; instructions } ->

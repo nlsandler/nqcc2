@@ -1,9 +1,15 @@
+open Batteries
+
 module T = struct
   include Tokens
 end
 
 module Ast = struct
   include Ast.Untyped
+end
+
+module Big_int = struct
+  include Extended_big_int
 end
 
 (* exceptions *)
@@ -49,33 +55,48 @@ let get_precedence = function
 
 (* getting a list of specifiers *)
 
+let is_type_specifier = function
+  | T.KWInt | KWLong | KWUnsigned | KWSigned -> true
+  | _ -> false
+
+let is_specifier = function
+  | T.KWStatic | KWExtern -> true
+  | other -> is_type_specifier other
+
 let rec parse_type_specifer_list tokens =
-  match peek tokens with
-  | T.KWInt | T.KWLong ->
-      let spec = Stream.next tokens in
-      spec :: parse_type_specifer_list tokens
-  | _ -> []
+  if is_type_specifier (peek tokens) then
+    let spec = Stream.next tokens in
+    spec :: parse_type_specifer_list tokens
+  else []
 
 let rec parse_specifier_list tokens =
-  match peek tokens with
-  | T.KWInt | KWLong | KWStatic | KWExtern ->
-      let spec = Stream.next tokens in
-      spec :: parse_specifier_list tokens
-  | _ -> []
+  if is_specifier (peek tokens) then
+    let spec = Stream.next tokens in
+    spec :: parse_specifier_list tokens
+  else []
 
 let parse_storage_class = function
   | T.KWExtern -> Ast.Extern
   | KWStatic -> Static
   | _ -> failwith "Internal error: bad storage class" [@coverage off]
 
-let parse_type = function
-  | [ T.KWInt ] -> Types.Int
-  | [ KWInt; KWLong ] | [ KWLong; KWInt ] | [ KWLong ] -> Long
-  | _ -> failwith "Invalid type specifier"
+let parse_type specifier_list =
+  if
+    specifier_list = []
+    || List.unique specifier_list <> specifier_list
+    || List.mem T.KWSigned specifier_list
+       && List.mem T.KWUnsigned specifier_list
+  then failwith "Invalid type specifier"
+  else if
+    List.mem T.KWUnsigned specifier_list && List.mem T.KWLong specifier_list
+  then Types.ULong
+  else if List.mem T.KWUnsigned specifier_list then Types.UInt
+  else if List.mem T.KWLong specifier_list then Types.Long
+  else Types.Int
 
 let parse_type_and_storage_class specifier_list =
   let types, storage_classes =
-    List.partition (fun tok -> tok = T.KWInt || tok = KWLong) specifier_list
+    List.partition (fun tok -> is_type_specifier tok) specifier_list
   in
   let typ = parse_type types in
   let storage_class =
@@ -103,13 +124,20 @@ let parse_constant tokens =
         | Some i32 -> Const.ConstInt i32
         | None -> ConstLong (Big_int.int64_of_big_int c))
     | T.ConstLong c -> ConstLong (Big_int.int64_of_big_int c)
+    | T.ConstUInt c -> (
+        match Big_int.uint32_of_big_int_opt c with
+        | Some ui32 -> Const.ConstUInt ui32
+        | None -> ConstULong (Big_int.uint64_of_big_int c))
+    | T.ConstULong c -> ConstULong (Big_int.uint64_of_big_int c)
     (* we only call this when we know the next token is a constant *)
     | _ ->
         raise (ParseError "Internal error when parsing constant")
         [@coverage off]
   with Failure _ ->
     (* int64_of_big_int raises failure when value is out of bounds *)
-    raise (ParseError "Constant is too large to fit in an int or long")
+    raise
+      (ParseError
+         "Constant is too large to fit in an int or long with given signedness")
 
 (* <unop> ::= "-" | "~" *)
 let parse_unop tokens =
@@ -147,7 +175,8 @@ let rec parse_factor tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
-  | T.ConstInt _ | T.ConstLong _ -> Ast.Constant (parse_constant tokens)
+  | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _ ->
+      Ast.Constant (parse_constant tokens)
   (* identifier *)
   | T.Identifier _ -> (
       let id = parse_id tokens in
@@ -163,22 +192,21 @@ let rec parse_factor tokens =
       let inner_exp = parse_factor tokens in
       Unary (operator, inner_exp)
   (* parenthesized expression *)
-  | T.OpenParen -> (
+  | T.OpenParen ->
       (* this is either a cast or a parenthesized expression *)
       (* Stream.junk consumes open paren *)
       let _ = Stream.junk tokens in
-      match peek tokens with
-      | KWInt | KWLong ->
-          (* it's a cast*)
-          let type_specifiers = parse_type_specifer_list tokens in
-          let target_type = parse_type type_specifiers in
-          expect T.CloseParen tokens;
-          let inner_exp = parse_factor tokens in
-          Cast { target_type; e = inner_exp }
-      | _ ->
-          let e = parse_expression 0 tokens in
-          let _ = expect T.CloseParen tokens in
-          e)
+      if is_type_specifier (peek tokens) then (
+        (* it's a cast*)
+        let type_specifiers = parse_type_specifer_list tokens in
+        let target_type = parse_type type_specifiers in
+        expect T.CloseParen tokens;
+        let inner_exp = parse_factor tokens in
+        Cast { target_type; e = inner_exp })
+      else
+        let e = parse_expression 0 tokens in
+        let _ = expect T.CloseParen tokens in
+        e
   (* errors *)
   | t -> raise_error ~expected:(Name "a factor") ~actual:t
 
@@ -332,9 +360,8 @@ and parse_for_loop tokens =
 
 (* <block-item> ::= <statement> | <declaration> *)
 and parse_block_item tokens =
-  match peek tokens with
-  | T.(KWInt | KWLong | KWStatic | KWExtern) -> Ast.D (parse_declaration tokens)
-  | _ -> S (parse_statement tokens)
+  if is_specifier (peek tokens) then Ast.D (parse_declaration tokens)
+  else S (parse_statement tokens)
 
 (* helper function to parse list of block items, stopping when we hit a close brace *)
 and parse_block_item_list tokens =
@@ -428,13 +455,12 @@ and parse_variable_declaration tokens =
 
 (* <for-init> ::= <declaration> | [ <exp> ] ";" *)
 and parse_for_init tokens =
-  match peek tokens with
-  (* note that a static or extern keyword here is invalid, but we'll catch that in semantic analysis *)
-  | T.(KWInt | KWLong | KWStatic | KWExtern) ->
-      InitDecl (parse_variable_declaration tokens)
-  | _ ->
-      let opt_e = parse_optional_expression T.Semicolon tokens in
-      InitExp opt_e
+  if is_specifier (peek tokens) then
+    (* note that a static or extern keyword here is invalid, but we'll catch that in semantic analysis *)
+    InitDecl (parse_variable_declaration tokens)
+  else
+    let opt_e = parse_optional_expression T.Semicolon tokens in
+    InitExp opt_e
 
 (* { <function-declaration> } *)
 let rec parse_declaration_list tokens =

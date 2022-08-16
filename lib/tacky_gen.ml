@@ -66,15 +66,19 @@ and emit_unary_expression t op inner =
 
 and emit_cast_expression target_type inner =
   let eval_inner, result = emit_tacky_for_exp inner in
-  if Type_utils.get_type inner = target_type then (eval_inner, result)
+  let inner_type = Type_utils.get_type inner in
+  if inner_type = target_type then (eval_inner, result)
   else
     let dst_name = create_tmp target_type in
     let dst = T.Var dst_name in
     let cast_instruction =
-      match target_type with
-      | Types.Long -> T.SignExtend { src = result; dst }
-      | Types.Int -> T.Truncate { src = result; dst }
-      | _ -> failwith "Internal error: cast to function type" [@coverage off]
+      if Type_utils.get_size target_type = Type_utils.get_size inner_type then
+        T.Copy { src = result; dst }
+      else if Type_utils.get_size target_type < Type_utils.get_size inner_type
+      then Truncate { src = result; dst }
+      else if Type_utils.is_signed inner_type then
+        T.SignExtend { src = result; dst }
+      else T.ZeroExtend { src = result; dst }
     in
     let instructions = eval_inner @ [ cast_instruction ] in
     (instructions, dst)
