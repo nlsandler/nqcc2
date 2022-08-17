@@ -71,6 +71,12 @@ let pp_instruction out = function
   | UIntToDouble { src; dst } ->
       Format.fprintf out "%a = UIntToDouble(%a)" pp_tacky_val dst pp_tacky_val
         src
+  | GetAddress { src; dst } ->
+      Format.fprintf out "%a = GetAddress(%a)" pp_tacky_val dst pp_tacky_val src
+  | Load { src_ptr; dst } ->
+      Format.fprintf out "%a = Load(%a)" pp_tacky_val dst pp_tacky_val src_ptr
+  | Store { src; dst_ptr } ->
+      Format.fprintf out "*(%a) = %a" pp_tacky_val dst_ptr pp_tacky_val src
 
 let pp_function_definition global name params out body =
   Format.pp_open_vbox out 0;

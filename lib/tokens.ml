@@ -55,4 +55,5 @@ type t =
   | QuestionMark
   | Colon
   | Comma
+  | Ampersand
 [@@deriving show]
