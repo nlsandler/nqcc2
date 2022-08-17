@@ -90,6 +90,8 @@ module Untyped = struct
     | Assignment of exp * exp
     | Conditional of { condition : exp; then_result : exp; else_result : exp }
     | FunCall of { f : string; args : exp list }
+    | Dereference of exp
+    | AddrOf of exp
   [@@deriving show]
 
   type t = exp CommonAst.prog_t
@@ -107,6 +109,8 @@ module Typed = struct
     | Assignment of exp * exp
     | Conditional of { condition : exp; then_result : exp; else_result : exp }
     | FunCall of { f : string; args : exp list }
+    | Dereference of exp
+    | AddrOf of exp
   [@@deriving show]
 
   and exp = { e : inner_exp; t : Types.t }

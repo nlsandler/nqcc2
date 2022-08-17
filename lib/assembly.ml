@@ -9,6 +9,7 @@ type reg =
   | R10
   | R11
   | SP
+  | BP
   | XMM0
   | XMM1
   | XMM2
@@ -24,7 +25,7 @@ type operand =
   | Imm of int64
   | Reg of reg
   | Pseudo of string
-  | Stack of int
+  | Memory of reg * int
   | Data of string
 
 type unary_operator = Neg | Not | Shr
@@ -36,6 +37,7 @@ type instruction =
   | Mov of asm_type * operand * operand
   | Movsx of operand * operand
   | MovZeroExtend of operand * operand
+  | Lea of operand * operand
   | Cvttsd2si of asm_type * operand * operand
   | Cvtsi2sd of asm_type * operand * operand
   | Unary of unary_operator * asm_type * operand

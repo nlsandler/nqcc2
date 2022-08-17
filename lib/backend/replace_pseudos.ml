@@ -13,7 +13,7 @@ let replace_operand state = function
       else
         match String_map.find_opt s state.offset_map with
         (* We've already assigned this operand a stack slot *)
-        | Some offset -> (state, Stack offset)
+        | Some offset -> (state, Memory (BP, offset))
         (* We haven't already assigned it a stack slot;
          * assign it and update state *)
         | None ->
@@ -29,7 +29,7 @@ let replace_operand state = function
                 offset_map = String_map.add s new_offset state.offset_map;
               }
             in
-            (new_state, Stack new_offset))
+            (new_state, Memory (BP, new_offset)))
   (* not a pseudo, so nothing to do *)
   | other -> (state, other)
 
@@ -50,6 +50,11 @@ let replace_pseudos_in_instruction state = function
       let state2, new_dst = replace_operand state1 dst in
       let new_movzx = MovZeroExtend (new_src, new_dst) in
       (state2, new_movzx)
+  | Lea (src, dst) ->
+      let state1, new_src = replace_operand state src in
+      let state2, new_dst = replace_operand state1 dst in
+      let new_lea = Lea (new_src, new_dst) in
+      (state2, new_lea)
       (* Replace dst of unary instruction *)
   | Unary (t, op, dst) ->
       let state1, new_dst = replace_operand state dst in

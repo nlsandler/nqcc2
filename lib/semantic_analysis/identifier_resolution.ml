@@ -12,24 +12,13 @@ let copy_identifier_map m =
 
 let rec resolve_exp id_map = function
   | Assignment (left, right) ->
-      (* validate that lhs is an lvalue *)
-      let _ =
-        match left with
-        | Var _ -> ()
-        | _ ->
-            failwith
-              (Format.asprintf
-                 "Expected expression on left-hand side of assignment \
-                  statement, found %a"
-                 pp_exp left)
-      in
       (* recursively process lhs and rhs *)
       Assignment (resolve_exp id_map left, resolve_exp id_map right)
   | Var v -> (
       (* rename var from map  *)
       try Var (String_map.find v id_map).unique_name
       with Not_found -> failwith (Printf.sprintf "Undeclared variable %s" v))
-  (* recursively process operands for casts, unary, binary, conditional, function calls *)
+  (* recursively process operands of other expressions *)
   | Cast { target_type; e } -> Cast { target_type; e = resolve_exp id_map e }
   | Unary (op, e) -> Unary (op, resolve_exp id_map e)
   | Binary (op, e1, e2) ->
@@ -47,6 +36,8 @@ let rec resolve_exp id_map = function
 
         FunCall { f = fn_name; args = List.map (resolve_exp id_map) args }
       with Not_found -> failwith "Undeclared function!")
+  | Dereference inner -> Dereference (resolve_exp id_map inner)
+  | AddrOf inner -> AddrOf (resolve_exp id_map inner)
   (* Nothing to do for constant *)
   | Constant _ as c -> c
 
