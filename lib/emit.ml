@@ -28,6 +28,7 @@ let show_long_reg = function
   | R10 -> "%r10d"
   | R11 -> "%r11d"
   | SP -> failwith "Internal error: no 32-bit RSP" [@coverage off]
+  | BP -> failwith "Internal error: no 32-bit RBP" [@coverage off]
   | _ ->
       failwith "Internal error: can't store longword type in XMM register"
       [@coverage off]
@@ -43,6 +44,7 @@ let show_quadword_reg = function
   | R10 -> "%r10"
   | R11 -> "%r11"
   | SP -> "%rsp"
+  | BP -> "%rbp"
   | _ ->
       failwith "Internal error: can't store quadword type in XMM register"
       [@coverage off]
@@ -70,7 +72,8 @@ let show_operand t = function
       | Quadword -> show_quadword_reg r
       | Double -> show_double_reg r)
   | Imm i -> Printf.sprintf "$%s" (Int64.to_string i)
-  | Stack i -> Printf.sprintf "%d(%%rbp)" i
+  | Memory (r, 0) -> Printf.sprintf "(%s)" (show_quadword_reg r)
+  | Memory (r, i) -> Printf.sprintf "%d(%s)" i (show_quadword_reg r)
   | Data name ->
       let lbl =
         if Assembly_symbols.is_constant name then show_local_label name
@@ -91,6 +94,7 @@ let show_byte_reg = function
   | R10 -> "%r10b"
   | R11 -> "%r11b"
   | SP -> failwith "Internal error: no one-byte RSP" [@coverage off]
+  | BP -> failwith "Internal error: no one-byte RBP" [@coverage off]
   | _ ->
       failwith "Internal error: can't store byte type in XMM register"
       [@coverage off]
@@ -164,6 +168,10 @@ let emit_instruction chan = function
       Printf.fprintf chan "\tidiv%s %s\n" (suffix t) (show_operand t operand)
   | Div (t, operand) ->
       Printf.fprintf chan "\tdiv%s %s\n" (suffix t) (show_operand t operand)
+  | Lea (src, dst) ->
+      Printf.fprintf chan "\tleaq %s, %s\n"
+        (show_operand Quadword src)
+        (show_operand Quadword dst)
   | Cdq Longword -> Printf.fprintf chan "\tcdq\n"
   | Cdq Quadword -> Printf.fprintf chan "\tcqo\n"
   | Jmp lbl -> Printf.fprintf chan "\tjmp %s\n" (show_local_label lbl)

@@ -31,7 +31,7 @@ module IntCastEvaluator (C : Castable) = struct
     | T.Int -> Const.ConstInt (C.to_int32 v)
     | UInt -> ConstUInt (v |> C.to_int64 |> UInt32.of_int64)
     | Long -> ConstLong (C.to_int64 v)
-    | ULong -> ConstULong (v |> C.to_int64 |> UInt64.of_int64)
+    | ULong | Pointer _ -> ConstULong (v |> C.to_int64 |> UInt64.of_int64)
     | Double -> ConstDouble (C.to_float v)
     | FunType _ ->
         failwith "Internal error: cannot cast constant to function type"
@@ -64,6 +64,9 @@ let const_convert target_type = function
       | ULong ->
           let bi = Big_int.of_float d in
           ConstULong (Big_int.uint64_of_big_int bi)
+      | Pointer _ ->
+          failwith "Internal error: cannot convert double to pointer"
+          [@coverage off]
       | _ ->
           let i64 = Int64.of_float d in
           LongCaster.cast i64 target_type)

@@ -5,7 +5,7 @@ open Tokens
 let check_extra_credit tok =
   let flag_enabled flag = List.mem flag !Settings.extra_credit_flags in
   match tok with
-  | (Ampersand | Pipe | Caret | DoubleLeftBracket | DoubleRightBracket)
+  | (Pipe | Caret | DoubleLeftBracket | DoubleRightBracket)
     when not (flag_enabled Settings.Bitwise) ->
       failwith "Unsupported extra-credit feature: bitwise operations"
   | (DoublePlus | DoubleHyphen) when not (flag_enabled Settings.Increment) ->

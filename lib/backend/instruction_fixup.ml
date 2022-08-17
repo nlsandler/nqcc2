@@ -12,15 +12,20 @@ let is_larger_than_uint imm =
   imm > max_i || imm < int32_min
 
 let is_constant = function Imm _ -> true | _ -> false
-let is_memory = function Stack _ | Data _ -> true | _ -> false
+let is_memory = function Memory _ | Data _ -> true | _ -> false
+
+let is_xmm = function
+  | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7 | XMM14 | XMM15 ->
+      true
+  | _ -> false
 
 let fixup_instruction = function
   (* Mov can't move a value from one memory address to another *)
-  | Mov (t, ((Stack _ | Data _) as src), ((Stack _ | Data _) as dst)) ->
+  | Mov (t, ((Memory _ | Data _) as src), ((Memory _ | Data _) as dst)) ->
       let scratch = if t = Double then Reg XMM14 else Reg R10 in
       [ Mov (t, src, scratch); Mov (t, scratch, dst) ]
   (* Mov can't move a large constant to a memory address *)
-  | Mov (Quadword, (Imm i as src), ((Stack _ | Data _) as dst)) when is_large i
+  | Mov (Quadword, (Imm i as src), ((Memory _ | Data _) as dst)) when is_large i
     ->
       [ Mov (Quadword, src, Reg R10); Mov (Quadword, Reg R10, dst) ]
   (* Moving a quadword-size constant with a longword operand size produces assembler warning *)
@@ -31,7 +36,7 @@ let fixup_instruction = function
       let reduced = Int64.logand i bitmask in
       [ Mov (Longword, Imm reduced, dst) ]
   (* Movsx can't handle immediate source or memory dst *)
-  | Movsx ((Imm _ as src), ((Stack _ | Data _) as dst)) ->
+  | Movsx ((Imm _ as src), ((Memory _ | Data _) as dst)) ->
       [
         Mov (Longword, src, Reg R10);
         Movsx (Reg R10, Reg R11);
@@ -39,7 +44,7 @@ let fixup_instruction = function
       ]
   | Movsx ((Imm _ as src), dst) ->
       [ Mov (Longword, src, Reg R10); Movsx (Reg R10, dst) ]
-  | Movsx (src, ((Stack _ | Data _) as dst)) ->
+  | Movsx (src, ((Memory _ | Data _) as dst)) ->
       [ Movsx (src, Reg R11); Mov (Quadword, Reg R11, dst) ]
   (* rewrite MovZerOExtend as one or two Mov instructions *)
   | MovZeroExtend (src, dst) -> (
@@ -49,6 +54,9 @@ let fixup_instruction = function
   (* Idiv can't operate on constants *)
   | Idiv (t, Imm i) -> [ Mov (t, Imm i, Reg R10); Idiv (t, Reg R10) ]
   | Div (t, Imm i) -> [ Mov (t, Imm i, Reg R10); Div (t, Reg R10) ]
+  (* dst of lea must be a register *)
+  | Lea (src, dst) when is_memory dst ->
+      [ Lea (src, Reg R11); Mov (Quadword, Reg R11, dst) ]
   (* Binary operations on double require register as destination *)
   | Binary { t = Double; dst = Reg _; _ } as i -> [ i ]
   | Binary { op; t = Double; src; dst } ->
@@ -75,8 +83,8 @@ let fixup_instruction = function
       {
         op = (Add | Sub | And | Or | Xor) as op;
         t;
-        src = (Stack _ | Data _) as src;
-        dst = (Stack _ | Data _) as dst;
+        src = (Memory _ | Data _) as src;
+        dst = (Memory _ | Data _) as dst;
       } ->
       [ Mov (t, src, Reg R10); Binary { op; t; src = Reg R10; dst } ]
   (* Destination of Mult can't be in memory; src can't be a big operand  *)
@@ -85,7 +93,7 @@ let fixup_instruction = function
         op = Mult;
         t = Quadword;
         src = Imm i as src;
-        dst = (Stack _ | Data _) as dst;
+        dst = (Memory _ | Data _) as dst;
       }
     when is_large i ->
       (* rewrite both operands *)
@@ -102,7 +110,7 @@ let fixup_instruction = function
         Mov (Quadword, src, Reg R10);
         Binary { op = Mult; t = Quadword; src = Reg R10; dst };
       ]
-  | Binary { op = Mult; t; src; dst = (Stack _ | Data _) as dst } ->
+  | Binary { op = Mult; t; src; dst = (Memory _ | Data _) as dst } ->
       [
         Mov (t, dst, Reg R11);
         Binary { op = Mult; t; src; dst = Reg R11 };
@@ -113,7 +121,7 @@ let fixup_instruction = function
   | Cmp (Double, src, dst) ->
       [ Mov (Double, dst, Reg XMM15); Cmp (Double, src, Reg XMM15) ]
   (* Both operands of cmp can't be in memory *)
-  | Cmp (t, ((Stack _ | Data _) as src), ((Stack _ | Data _) as dst)) ->
+  | Cmp (t, ((Memory _ | Data _) as src), ((Memory _ | Data _) as dst)) ->
       [ Mov (t, src, Reg R10); Cmp (t, Reg R10, dst) ]
   (* first operand of Cmp can't be a large constant, second can't be a constant at all *)
   | Cmp (Quadword, (Imm i as src), (Imm _ as dst)) when is_large i ->
@@ -125,10 +133,16 @@ let fixup_instruction = function
   | Cmp (Quadword, (Imm i as src), dst) when is_large i ->
       [ Mov (Quadword, src, Reg R10); Cmp (Quadword, Reg R10, dst) ]
   | Cmp (t, src, Imm i) -> [ Mov (t, Imm i, Reg R11); Cmp (t, src, Reg R11) ]
+  | Push (Reg r) when is_xmm r ->
+      [
+        Binary
+          { op = Sub; t = Quadword; src = Imm (Int64.of_int 8); dst = Reg SP };
+        Mov (Double, Reg r, Memory (SP, 0));
+      ]
   | Push (Imm i as src) when is_large i ->
       [ Mov (Quadword, src, Reg R10); Push (Reg R10) ]
       (* destination of cvttsd2si must be a register *)
-  | Cvttsd2si (t, src, ((Stack _ | Data _) as dst)) ->
+  | Cvttsd2si (t, src, ((Memory _ | Data _) as dst)) ->
       [ Cvttsd2si (t, src, Reg R11); Mov (t, Reg R11, dst) ]
   | Cvtsi2sd (t, src, dst) as i ->
       if is_constant src && is_memory dst then
