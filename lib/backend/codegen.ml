@@ -31,7 +31,7 @@ let convert_val = function
 
 let convert_type = function
   | Types.Int | UInt -> Assembly.Longword
-  | Long | ULong -> Quadword
+  | Long | ULong | Pointer _ -> Quadword
   | Double -> Double
   | FunType _ ->
       failwith "Internal error, converting function type to assembly"
@@ -251,6 +251,20 @@ let convert_instruction = function
             Mov (src_t, asm_src1, asm_dst);
             Binary { op = asm_op; t = src_t; src = asm_src2; dst = asm_dst };
           ])
+  | Tacky.Load { src_ptr; dst } ->
+      let asm_src_ptr = convert_val src_ptr in
+      let asm_dst = convert_val dst in
+      let t = asm_type dst in
+      [ Mov (Quadword, asm_src_ptr, Reg R9); Mov (t, Memory (R9, 0), asm_dst) ]
+  | Tacky.Store { src; dst_ptr } ->
+      let asm_src = convert_val src in
+      let t = asm_type src in
+      let asm_dst_ptr = convert_val dst_ptr in
+      [ Mov (Quadword, asm_dst_ptr, Reg R9); Mov (t, asm_src, Memory (R9, 0)) ]
+  | Tacky.GetAddress { src; dst } ->
+      let asm_src = convert_val src in
+      let asm_dst = convert_val dst in
+      [ Lea (asm_src, asm_dst) ]
   | Tacky.Jump target -> [ Jmp target ]
   | Tacky.JumpIfZero (cond, target) ->
       let t = asm_type cond in
@@ -375,8 +389,8 @@ let pass_params param_list =
     Assembly.Mov (Double, Reg r, param)
   in
   let pass_on_stack idx (param_t, param) =
-    (* first param passed on stack has idx 0 and is passed at Stack(16) *)
-    let stk = Assembly.Stack (16 + (8 * idx)) in
+    (* first param passed on stack has idx 0 and is passed at 16(%rbp) *)
+    let stk = Assembly.Memory (BP, 16 + (8 * idx)) in
     Assembly.Mov (param_t, stk, param)
   in
   List.mapi pass_in_int_register int_reg_params
