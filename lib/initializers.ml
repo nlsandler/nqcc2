@@ -24,7 +24,7 @@ let zero = function
   | Types.Int -> IntInit Int32.zero
   | Long -> LongInit Int64.zero
   | UInt -> UIntInit UInt32.zero
-  | ULong -> ULongInit UInt64.zero
+  | ULong | Pointer _ -> ULongInit UInt64.zero
   | Double -> DoubleInit Float.zero
   | FunType _ ->
       failwith "Internal error: zero doesn't make sense for function type"

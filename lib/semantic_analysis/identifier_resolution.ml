@@ -13,54 +13,20 @@ let copy_identifier_map m =
 
 let rec resolve_exp id_map = function
   | Assignment (left, right) ->
-      (* validate that lhs is an lvalue *)
-      let _ =
-        match left with
-        | Var _ -> ()
-        | _ ->
-            failwith
-              (Format.asprintf
-                 "Expected lvalue on left-hand side of assignment statement, \
-                  found %a"
-                 pp_exp left)
-      in
       (* recursively process lhs and rhs *)
       Assignment (resolve_exp id_map left, resolve_exp id_map right)
   | CompoundAssignment (op, left, right) ->
-      (* validate that lhs is an lvalue *)
-      let _ =
-        match left with
-        | Var _ -> ()
-        | _ ->
-            failwith
-              (Format.asprintf
-                 "Expected lvalue on left-hand side of compound assignment \
-                  statement, found %a"
-                 pp_exp left)
-      in
       (* recursively process lhs and rhs *)
       CompoundAssignment (op, resolve_exp id_map left, resolve_exp id_map right)
-  | PostfixIncr (Var _ as e) -> PostfixIncr (resolve_exp id_map e)
-  | PostfixIncr e ->
-      failwith
-        ("Operand of postfix expression must be lvalue, found " ^ show_exp e)
-  | PostfixDecr (Var _ as e) -> PostfixDecr (resolve_exp id_map e)
-  | PostfixDecr e ->
-      failwith
-        ("Operand of postfix expression must be lvalue, found " ^ show_exp e)
+  | PostfixIncr e -> PostfixIncr (resolve_exp id_map e)
+  | PostfixDecr e -> PostfixDecr (resolve_exp id_map e)
   | Var v -> (
       (* rename var from map  *)
       try Var (Map.find v id_map).unique_name
       with Not_found -> failwith (Printf.sprintf "Undeclared variable %s" v))
-  (* recursively process operands for casts, unary, binary, conditional, function calls *)
+  (* recursively process operands of other expressions *)
   | Cast { target_type; e } -> Cast { target_type; e = resolve_exp id_map e }
-  | Unary (op, e) ->
-      (* validate prefix ops*)
-      (match (op, e) with
-      | (Incr | Decr), Var _ -> ()
-      | (Incr | Decr), _ -> failwith "operand of ++/-- must be a variable"
-      | _ -> ());
-      Unary (op, resolve_exp id_map e)
+  | Unary (op, e) -> Unary (op, resolve_exp id_map e)
   | Binary (op, e1, e2) ->
       Binary (op, resolve_exp id_map e1, resolve_exp id_map e2)
   | Conditional { condition; then_result; else_result } ->
@@ -76,6 +42,8 @@ let rec resolve_exp id_map = function
 
         FunCall { f = fn_name; args = List.map (resolve_exp id_map) args }
       with Not_found -> failwith "Undeclared function!")
+  | Dereference inner -> Dereference (resolve_exp id_map inner)
+  | AddrOf inner -> AddrOf (resolve_exp id_map inner)
   (* Nothing to do for constant *)
   | Constant _ as c -> c
 

@@ -147,6 +147,140 @@ let parse_id tokens =
   | T.Identifier x -> x
   | other -> raise_error ~expected:(Name "an identifier") ~actual:other
 
+(* Parsing declarators *)
+
+(* first parse declarators to this type, then convert to AST  *)
+type declarator =
+  | Ident of string
+  | PointerDeclarator of declarator
+  | FunDeclarator of param_info list * declarator
+
+and param_info = Param of Types.t * declarator
+
+(* <simple-declarator> ::= <identifier> | "(" <declarator> ")" *)
+let rec parse_simple_declarator tokens =
+  let next_tok = Stream.next tokens in
+  match next_tok with
+  | T.OpenParen ->
+      let decl = parse_declarator tokens in
+      expect T.CloseParen tokens;
+      decl
+  | Identifier id -> Ident id
+  | other -> raise_error ~expected:(Name "a simple declarator") ~actual:other
+
+(* <declarator> ::= "*" <declarator> | <direct-declarator> *)
+and parse_declarator tokens =
+  match peek tokens with
+  | T.Star ->
+      Stream.junk tokens;
+      let inner = parse_declarator tokens in
+      PointerDeclarator inner
+  | _ -> parse_direct_declarator tokens
+
+(* <direct-declarator> ::= <simple-declarator> [ <param-list> ] *)
+and parse_direct_declarator tokens =
+  let simple_dec = parse_simple_declarator tokens in
+  match peek tokens with
+  | T.OpenParen ->
+      let params = parse_param_list tokens in
+      FunDeclarator (params, simple_dec)
+  | _ -> simple_dec
+
+(* <param-list> ::= "(" <param> { "," <param> } ")" | "(" "void" ")" *)
+and parse_param_list tokens =
+  expect T.OpenParen tokens;
+  let params =
+    match peek tokens with
+    | T.KWVoid ->
+        Stream.junk tokens;
+        []
+    | _ -> param_loop tokens
+  in
+  expect T.CloseParen tokens;
+  params
+
+and param_loop tokens =
+  let p = parse_param tokens in
+  match peek tokens with
+  | T.Comma ->
+      (* parse the rest of the param list *)
+      Stream.junk tokens;
+      p :: param_loop tokens
+  | _ -> [ p ]
+
+(* <param> ::= { <type-specifier> }+ <declarator> *)
+and parse_param tokens =
+  let specifiers = parse_type_specifer_list tokens in
+  let param_type = parse_type specifiers in
+  let param_decl = parse_declarator tokens in
+  Param (param_type, param_decl)
+
+let rec process_declarator decl base_type =
+  match decl with
+  | Ident s -> (s, base_type, [])
+  | PointerDeclarator d ->
+      let derived_type = Types.Pointer base_type in
+      process_declarator d derived_type
+  | FunDeclarator (params, Ident s) ->
+      let process_param (Param (p_base_type, p_decl)) =
+        let param_name, param_t, _ = process_declarator p_decl p_base_type in
+        (match param_t with
+        | Types.FunType _ ->
+            raise
+              (ParseError "Function pointers in parameters are not supported")
+        | _ -> ());
+        (param_name, param_t)
+      in
+      let param_names, param_types =
+        List.split (List.map process_param params)
+      in
+      let fun_type = Types.FunType { param_types; ret_type = base_type } in
+      (s, fun_type, param_names)
+  | FunDeclarator _ ->
+      raise
+        (ParseError
+           "can't apply additional type derivations to a function declarator")
+
+(* abstract declarators*)
+type abstract_declarator =
+  | AbstractPointer of abstract_declarator
+  | AbstractBase
+
+(* <abstract-declarator> ::= "*" [ <abstract-declarator> ]
+                        | <direct-abstract-declarator>
+*)
+
+let rec parse_abstract_declarator tokens =
+  match peek tokens with
+  | T.Star ->
+      (* it's a pointer declarator *)
+      Stream.junk tokens;
+      let inner =
+        match peek tokens with
+        | T.Star | T.OpenParen ->
+            (* there's an inner declarator *)
+            parse_abstract_declarator tokens
+        | T.CloseParen -> AbstractBase
+        | other ->
+            raise_error ~expected:(Name "an abstract declarator") ~actual:other
+      in
+      AbstractPointer inner
+  | _ -> parse_direct_abstract_declarator tokens
+
+(* <direct-abstract-declarator ::= "(" <abstract-declarator> ")" *)
+and parse_direct_abstract_declarator tokens =
+  expect T.OpenParen tokens;
+  let decl = parse_abstract_declarator tokens in
+  expect T.CloseParen tokens;
+  decl
+
+let rec process_abstract_declarator decl base_type =
+  match decl with
+  | AbstractBase -> base_type
+  | AbstractPointer inner ->
+      let derived_type = Types.Pointer base_type in
+      process_abstract_declarator inner derived_type
+
 (* <int> ::= ? A constant token ? *)
 let parse_constant tokens =
   try
@@ -193,7 +327,10 @@ let parse_binop tokens =
   | T.Star -> Multiply
   | T.Slash -> Divide
   | T.Percent -> Mod
-  | T.Ampersand -> BitwiseAnd
+  | T.Ampersand ->
+      (* Check this here b/c we can't check during lexing - & token is also address operator *)
+      if List.mem Settings.Bitwise !Settings.extra_credit_flags then BitwiseAnd
+      else failwith "bitwise & operator not enabled "
   | T.Caret -> BitwiseXor
   | T.Pipe -> BitwiseOr
   | T.DoubleLeftBracket -> BitshiftLeft
@@ -263,11 +400,27 @@ and parse_factor tokens =
       let operator = parse_unop tokens in
       let inner_exp = parse_factor tokens in
       Ast.Unary (operator, inner_exp)
+  | T.Star :: _ ->
+      Stream.junk tokens;
+      let inner_exp = parse_factor tokens in
+      Dereference inner_exp
+  | T.Ampersand :: _ ->
+      Stream.junk tokens;
+      let inner_exp = parse_factor tokens in
+      AddrOf inner_exp
   | T.OpenParen :: t :: _ when is_type_specifier t ->
       (* it's a cast - consume open paren, then parse type specifiers *)
       let _ = Stream.junk tokens in
       let type_specifiers = parse_type_specifer_list tokens in
-      let target_type = parse_type type_specifiers in
+      let base_type = parse_type type_specifiers in
+      (* check for optional abstract declarator *)
+      let target_type =
+        match peek tokens with
+        | T.CloseParen -> base_type
+        | _ ->
+            let abstract_decl = parse_abstract_declarator tokens in
+            process_abstract_declarator abstract_decl base_type
+      in
       expect T.CloseParen tokens;
       let inner_exp = parse_factor tokens in
       Cast { target_type; e = inner_exp }
@@ -479,20 +632,11 @@ and parse_block tokens =
   Block block_items
 
 (*
-   <function-declaration> ::= "int" <identifier> "(" "void" | <param-list> ")" ( <block> | ";")
-   we've already parsed "int" <identifier>
+   <function-declaration> ::= { <specifier> }+ <declarator> ( <block> | ";")
+   we've already parsed { <specifier> }+ <declarator>
 *)
-and finish_parsing_function_declaration ret_type storage_class name tokens =
-  expect T.OpenParen tokens;
-  let params_with_types =
-    match peek tokens with
-    | T.KWVoid ->
-        Stream.junk tokens;
-        []
-    | _ -> parse_param_list tokens
-  in
-  let param_types, params = List.split params_with_types in
-  expect T.CloseParen tokens;
+and finish_parsing_function_declaration fun_type storage_class name params
+    tokens =
   let body =
     match peek tokens with
     | T.OpenBrace -> Some (parse_block tokens)
@@ -502,23 +646,10 @@ and finish_parsing_function_declaration ret_type storage_class name tokens =
     | other ->
         raise_error ~expected:(Name "function body or semicolon") ~actual:other
   in
-  let fun_type = Types.FunType { param_types; ret_type } in
   Ast.{ name; fun_type; storage_class; params; body }
 
-(* <param-list> ::= "int" <identifier> { "," "int" <identifier> } *)
-and parse_param_list tokens =
-  let specifiers = parse_type_specifer_list tokens in
-  let param_type = parse_type specifiers in
-  let next_param = parse_id tokens in
-  match peek tokens with
-  | T.Comma ->
-      (* parse the rest of the param list *)
-      Stream.junk tokens;
-      (param_type, next_param) :: parse_param_list tokens
-  | _ -> [ (param_type, next_param) ]
-
-(* <variable-declaration> ::= "int" <identifier> [ "=" <exp> ] ";"
-   we've already parsed "int" <identifer> *)
+(* <variable-declaration> ::= { <specifier> }+ <declarator> [ "=" <exp> ] ";"
+   we've already parsed { <specifier> }+ <declarator> *)
 and finish_parsing_variable_declaration var_type storage_class name tokens =
   match Stream.next tokens with
   | T.Semicolon -> Ast.{ name; var_type; storage_class; init = None }
@@ -530,19 +661,25 @@ and finish_parsing_variable_declaration var_type storage_class name tokens =
       raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
 (* <declaration> ::= <variable-declaration> | <function-declaration>
-   parse "int" <identifier>, then call appropriate function to finish parsing
+   parse until declarator, then call appropriate function to finish parsing
 *)
 and parse_declaration tokens =
   let specifiers = parse_specifier_list tokens in
-  let typ, storage_class = parse_type_and_storage_class specifiers in
-  let name = parse_id tokens in
-  match peek tokens with
-  | T.OpenParen ->
+  let base_typ, storage_class = parse_type_and_storage_class specifiers in
+  let declarator = parse_declarator tokens in
+  let name, typ, params = process_declarator declarator base_typ in
+  match typ with
+  | Types.FunType _ ->
       FunDecl
-        (finish_parsing_function_declaration typ storage_class name tokens)
+        (finish_parsing_function_declaration typ storage_class name params
+           tokens)
   | _ ->
-      VarDecl
-        (finish_parsing_variable_declaration typ storage_class name tokens)
+      if params = [] then
+        VarDecl
+          (finish_parsing_variable_declaration typ storage_class name tokens)
+      else
+        failwith "Internal error: declarator has parameters but object type"
+        [@coverage off]
 
 (* helper function to accept variable declarations and reject function declarations *)
 and parse_variable_declaration tokens =
