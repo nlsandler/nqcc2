@@ -19,7 +19,7 @@ let const_of_int64 v = function
   | T.Int -> C.ConstInt (Int64.to_int32 v)
   | T.Long -> C.ConstLong v
   | T.UInt -> C.ConstUInt (UInt32.of_int64 v)
-  | T.ULong -> C.ConstULong (UInt64.of_int64 v)
+  | T.ULong | T.Pointer _ -> C.ConstULong (UInt64.of_int64 v)
   | T.Double -> C.ConstDouble (Int64.to_float v)
   | T.FunType _ ->
       failwith "Internal error: can't convert constant to function type"

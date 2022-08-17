@@ -15,17 +15,6 @@ let copy_identifier_map m =
 
 let rec resolve_exp id_map = function
   | Assignment (left, right) ->
-      (* validate that lhs is an lvalue *)
-      let _ =
-        match left with
-        | Var _ -> ()
-        | _ ->
-            failwith
-              (Format.asprintf
-                 "Expected expression on left-hand side of assignment \
-                  statement, found %a"
-                 pp_exp left)
-      in
       (* recursively process lhs and rhs *)
       Assignment (resolve_exp id_map left, resolve_exp id_map right)
   | Var v -> (
@@ -51,6 +40,8 @@ let rec resolve_exp id_map = function
 
         FunCall { f = fn_name; args = List.map (resolve_exp id_map) args }
       with Not_found -> failwith "Undeclared function!")
+  | Dereference inner -> Dereference (resolve_exp id_map inner)
+  | AddrOf inner -> AddrOf (resolve_exp id_map inner)
   (* Nothing to do for constant *)
   | Constant _ as c -> c
 

@@ -35,6 +35,9 @@ type instruction =
       dst : tacky_val;
     }
   | Copy of { src : tacky_val; dst : tacky_val }
+  | GetAddress of { src : tacky_val; dst : tacky_val }
+  | Load of { src_ptr : tacky_val; dst : tacky_val }
+  | Store of { src : tacky_val; dst_ptr : tacky_val }
   | Jump of string
   | JumpIfZero of tacky_val * string
   | JumpIfNotZero of tacky_val * string

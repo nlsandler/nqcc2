@@ -179,6 +179,47 @@ module Private = struct
     | T.ConstDouble d -> Const.ConstDouble d
     | other -> raise_error ~expected:(Name "a constant token") ~actual:other
 
+  (*** Abstract declarators ***)
+
+  type abstract_declarator =
+    | AbstractPointer of abstract_declarator
+    | AbstractBase
+
+  (* <abstract-declarator> ::= "*" [ <abstract-declarator> ]
+   *                         | <direct-abstract-declarator>
+   *)
+
+  let rec parse_abstract_declarator tokens =
+    match Tok_stream.peek tokens with
+    | T.Star ->
+        (* it's a pointer declarator *)
+        let _ = Tok_stream.take_token tokens in
+        let inner =
+          match Tok_stream.peek tokens with
+          (* there's an inner declarator *)
+          | T.Star | T.OpenParen -> parse_abstract_declarator tokens
+          (* We've parsed the whole abstract declarator *)
+          | _ -> AbstractBase
+        in
+        AbstractPointer inner
+    | _ -> parse_direct_abstract_declarator tokens
+
+  (* <direct-abstract-declarator ::= "(" <abstract-declarator> ")" *)
+  and parse_direct_abstract_declarator tokens =
+    expect T.OpenParen tokens;
+    let decl = parse_abstract_declarator tokens in
+    expect T.CloseParen tokens;
+    decl
+
+  (* Convert an abstract declarator + base type to a derived type (analogous to
+     Listing 14-6) *)
+  let rec process_abstract_declarator decl base_type =
+    match decl with
+    | AbstractBase -> base_type
+    | AbstractPointer inner ->
+        let derived_type = Types.Pointer base_type in
+        process_abstract_declarator inner derived_type
+
   (*** Expressions ***)
 
   (* return Some prec if token represents a binary operator, None otherwise*)
@@ -193,7 +234,8 @@ module Private = struct
     | T.EqualSign -> Some 1
     | _ -> None
 
-  (* <unop> ::= "-" | "~" | "!" *)
+  (* <unop> ::= "-" | "~" | "!" | "*" | "&"
+   * but we parse "*" and "&" in parse_factor, not here. *)
   let parse_unop tokens =
     match Tok_stream.take_token tokens with
     | T.Tilde -> Ast.Complement
@@ -223,7 +265,7 @@ module Private = struct
     | other -> raise_error ~expected:(Name "a binary operator") ~actual:other
 
   (* <factor> ::= <const> | <identifier>
-   *            | "(" { <type-specifier }+ ")" <factor>
+   *            | "(" { <type-specifier> }+ [ <abstract-declarator> ] ")" <factor>
    *            | <unop> <factor> | "(" <exp> ")"
    *            | <identifier> "(" [ <argument-list> ] ")" *)
   let rec parse_factor tokens =
@@ -246,7 +288,15 @@ module Private = struct
           let _ = expect T.CloseParen tokens in
           Ast.FunCall { f = id; args }
         else (* It's a variable *) Ast.Var id
-    (* unary expression *)
+    (* unary expressions *)
+    | T.Star ->
+        let _ = Tok_stream.take_token tokens in
+        let inner_exp = parse_factor tokens in
+        Dereference inner_exp
+    | T.Ampersand ->
+        let _ = Tok_stream.take_token tokens in
+        let inner_exp = parse_factor tokens in
+        AddrOf inner_exp
     | T.Hyphen | T.Tilde | T.Bang ->
         let operator = parse_unop tokens in
         let inner_exp = parse_factor tokens in
@@ -258,7 +308,15 @@ module Private = struct
         if is_type_specifier (Tok_stream.peek tokens) then
           (* It's a cast expression *)
           let type_specifiers = parse_type_specifier_list tokens in
-          let target_type = parse_type type_specifiers in
+          let base_type = parse_type type_specifiers in
+          (* check for optional abstract declarator *)
+          let target_type =
+            match Tok_stream.peek tokens with
+            | T.CloseParen -> base_type
+            | _ ->
+                let abstract_decl = parse_abstract_declarator tokens in
+                process_abstract_declarator abstract_decl base_type
+          in
           let _ = expect T.CloseParen tokens in
           let inner_exp = parse_factor tokens in
           Ast.Cast { target_type; e = inner_exp }
@@ -327,42 +385,112 @@ module Private = struct
 
   (*** Declarations ***)
 
-  (* <param-list> ::= "void"
-   *                | { <type-specifier> }+ <identifier> { "," { <type-specifier> }+ <identifier> } *)
-  let parse_param_list tokens =
-    if Tok_stream.peek tokens = T.KWVoid then
-      (* no params - return empty list *)
+  type declarator =
+    | Ident of string
+    | PointerDeclarator of declarator
+    | FunDeclarator of param_info list * declarator
+
+  and param_info = Param of Types.t * declarator
+
+  (* <declarator> ::= "*" <declarator> | <direct-declarator> *)
+  let rec parse_declarator tokens =
+    match Tok_stream.peek tokens with
+    | T.Star ->
+        let _ = Tok_stream.take_token tokens in
+        let inner = parse_declarator tokens in
+        PointerDeclarator inner
+    | _ -> parse_direct_declarator tokens
+
+  (* <direct-declarator> ::= <simple-declarator> [ <param-list> ] *)
+  and parse_direct_declarator tokens =
+    let simple_dec = parse_simple_declarator tokens in
+    match Tok_stream.peek tokens with
+    | T.OpenParen ->
+        let params = parse_param_list tokens in
+        FunDeclarator (params, simple_dec)
+    | _ -> simple_dec
+
+  (* <param-list> ::= "(" "void" ")"
+   *                | "(" <param> { "," <param> } ")"
+   *)
+  and parse_param_list tokens =
+    if Tok_stream.npeek 3 tokens = [ T.OpenParen; T.KWVoid; T.CloseParen ] then
+      (* No params - consume these three tokens and return empty list *)
+      let _ = Tok_stream.take_token tokens in
+      let _ = Tok_stream.take_token tokens in
       let _ = Tok_stream.take_token tokens in
       []
     else
+      let _ = expect T.OpenParen tokens in
       let rec param_loop () =
-        let next_param_t = parse_type (parse_type_specifier_list tokens) in
-        let next_param_name = parse_id tokens in
-        let next_param = (next_param_t, next_param_name) in
+        let next_param = parse_param tokens in
         if Tok_stream.peek tokens = T.Comma then
           (* there are more params *)
           let _ = Tok_stream.take_token tokens in
           next_param :: param_loop ()
         else [ next_param ]
       in
-      param_loop ()
+      let params = param_loop () in
+      let _ = expect T.CloseParen tokens in
+      params
 
-  (* <function-declaration> ::= { <specifier> }+ <identifier> "(" <param-list> ")" ( <block> | ";" )
-   * <variable-declaration> ::= { <specifier> }+ <identifier> [ "=" <exp> ] ";"
-   * Use a common function to parse both symbols
+  (* <param> ::= { <type-specifier> }+ <declarator> *)
+  and parse_param tokens =
+    let param_t = parse_type (parse_type_specifier_list tokens) in
+    let param_decl = parse_declarator tokens in
+    Param (param_t, param_decl)
+
+  (* <simple-declarator> ::= <identifier> | "(" <declarator> ")" *)
+  and parse_simple_declarator tokens =
+    let next_tok = Tok_stream.take_token tokens in
+    match next_tok with
+    | T.OpenParen ->
+        let decl = parse_declarator tokens in
+        expect T.CloseParen tokens;
+        decl
+    | Identifier id -> Ident id
+    | other -> raise_error ~expected:(Name "a simple declarator") ~actual:other
+
+  (* Derive type and identifier information from a base type and declarator
+     (Listing 14-7). *)
+  let rec process_declarator decl base_type =
+    match decl with
+    | Ident s -> (s, base_type, [])
+    | PointerDeclarator d ->
+        let derived_type = Types.Pointer base_type in
+        process_declarator d derived_type
+    | FunDeclarator (params, Ident s) ->
+        let process_param (Param (p_base_type, p_decl)) =
+          let param_name, param_t, _ = process_declarator p_decl p_base_type in
+          (match param_t with
+          | Types.FunType _ ->
+              raise
+                (ParseError "Function pointers in parameters are not supported")
+          | _ -> ());
+          (param_name, param_t)
+        in
+        let param_names, param_types =
+          List.split (List.map process_param params)
+        in
+        let fun_type = Types.FunType { param_types; ret_type = base_type } in
+        (s, fun_type, param_names)
+    | FunDeclarator _ ->
+        raise
+          (ParseError
+             "can't apply additional type derivations to a function declarator")
+
+  (* <function-declaration> ::= { <specifier> }+ <declarator> ( <block> | ";" )
+   * <variable-declaration> ::= { <specifier> }+ <declarator> [ "=" <exp> ] ";"
+   * Use a common function to parse both symbols (Listing 14-8).
    *)
   let rec parse_declaration tokens =
     let specifiers = parse_specifier_list tokens in
-    let typ, storage_class = parse_type_and_storage_class specifiers in
-    let name = parse_id tokens in
-    match Tok_stream.peek tokens with
+    let base_type, storage_class = parse_type_and_storage_class specifiers in
+    let decl = parse_declarator tokens in
+    let name, typ, params = process_declarator decl base_type in
+    match typ with
     (* It's a function declaration *)
-    | T.OpenParen ->
-        let _ = Tok_stream.take_token tokens in
-        let params_with_types = parse_param_list tokens in
-        let param_types, param_names = List.split params_with_types in
-        let fun_type = Types.FunType { param_types; ret_type = typ } in
-        expect T.CloseParen tokens;
+    | Types.FunType _ ->
         let body =
           match Tok_stream.peek tokens with
           | T.Semicolon ->
@@ -370,12 +498,11 @@ module Private = struct
               None
           | _ -> Some (parse_block tokens)
         in
-        Ast.FunDecl
-          { name; fun_type; storage_class; params = param_names; body }
+        Ast.FunDecl { name; fun_type = typ; storage_class; params; body }
     (* It's a variable *)
-    | tok ->
+    | _ ->
         let init =
-          if tok = T.EqualSign then
+          if Tok_stream.peek tokens = T.EqualSign then
             let _ = Tok_stream.take_token tokens in
             Some (parse_exp 0 tokens)
           else None

@@ -126,6 +126,7 @@ let token_defs =
     def {_|\?|_} (literal T.QuestionMark);
     def ":" (literal T.Colon);
     def "," (literal T.Comma);
+    def "&" (literal T.Ampersand);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)
