@@ -32,6 +32,7 @@ let get_size var_name =
   match Hashtbl.find symbol_table var_name with
   | Obj { t = Longword; _ } -> 4
   | Obj { t = Quadword | Double; _ } -> 8
+  | Obj { t = ByteArray { size; _ }; _ } -> size
   | Fun _ ->
       failwith "Internal error: this is a function, not an object"
       [@coverage off]
@@ -40,6 +41,7 @@ let get_alignment var_name =
   match Hashtbl.find symbol_table var_name with
   | Obj { t = Longword; _ } -> 4
   | Obj { t = Quadword | Double; _ } -> 8
+  | Obj { t = ByteArray { alignment; _ }; _ } -> alignment
   | Fun _ ->
       failwith "Internal error: this is a function, not an object"
       [@coverage off]
