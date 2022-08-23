@@ -9,11 +9,8 @@ module T = struct
   include Ast.Typed
 end
 
-let is_pointer = function Types.Pointer _ -> true | _ -> false
-
-let is_arithmetic = function
-  | Types.Int | UInt | Long | ULong | Double -> true
-  | FunType _ | Pointer _ -> false
+let is_lvalue T.{ e; _ } =
+  match e with T.Dereference _ | T.Subscript _ | T.Var _ -> true | _ -> false
 
 let convert_to e target_type =
   let cast = T.Cast { target_type; e } in
@@ -26,14 +23,15 @@ let get_common_type t1 t2 =
   else if get_size t1 > get_size t2 then t1
   else t2
 
+let is_zero_int = function
+  | Const.ConstInt i when i = Int32.zero -> true
+  | ConstLong l when l = Int64.zero -> true
+  | ConstUInt u when u = UInt32.zero -> true
+  | ConstULong ul when ul = UInt64.zero -> true
+  | _ -> false
+
 let is_null_pointer_constant = function
-  | T.Constant c -> (
-      match c with
-      | ConstInt i when i = Int32.zero -> true
-      | ConstLong l when l = Int64.zero -> true
-      | ConstUInt u when u = UInt32.zero -> true
-      | ConstULong ul when ul = UInt64.zero -> true
-      | _ -> false)
+  | T.Constant c -> is_zero_int c
   | _ -> false
 
 let get_common_pointer_type e1 e2 =
@@ -76,10 +74,11 @@ let rec typecheck_exp = function
   | Binary (op, e1, e2) -> (
       match op with
       | And | Or -> typecheck_logical op e1 e2
-      | Add | Subtract | Multiply | Divide | Mod ->
-          typecheck_arithmetic op e1 e2
-      | Equal | NotEqual | GreaterThan | GreaterOrEqual | LessThan | LessOrEqual
-        ->
+      | Add -> typecheck_addition e1 e2
+      | Subtract -> typecheck_subtraction e1 e2
+      | Multiply | Divide | Mod -> typecheck_multiplicative op e1 e2
+      | Equal | NotEqual -> typecheck_equality op e1 e2
+      | GreaterThan | GreaterOrEqual | LessThan | LessOrEqual ->
           typecheck_comparison op e1 e2)
   | Assignment (lhs, rhs) -> typecheck_assignment lhs rhs
   | Conditional { condition; then_result; else_result } ->
@@ -87,23 +86,29 @@ let rec typecheck_exp = function
   | FunCall { f; args } -> typecheck_fun_call f args
   | Dereference inner -> typecheck_dereference inner
   | AddrOf inner -> typecheck_addr_of inner
+  | Subscript { ptr; index } -> typecheck_subscript ptr index
 
 and typecheck_cast target_type inner =
-  let typed_inner = typecheck_exp inner in
-  match (target_type, typed_inner.t) with
-  | Double, Pointer _ | Pointer _, Double ->
-      failwith "Cannot cast between pointer and double"
-  | _ ->
-      let cast_exp = T.Cast { target_type; e = typecheck_exp inner } in
-      set_type cast_exp target_type
+  match target_type with
+  | Array _ -> failwith "Cannot cast to array type"
+  | _ -> (
+      let typed_inner = typecheck_and_convert inner in
+      match (target_type, typed_inner.T.t) with
+      | Types.Double, Types.Pointer _ | Pointer _, Double ->
+          failwith "Cannot cast between pointer and double"
+      | _ ->
+          let cast_exp =
+            T.Cast { target_type; e = typecheck_and_convert inner }
+          in
+          set_type cast_exp target_type)
 
 and typecheck_not inner =
-  let typed_inner = typecheck_exp inner in
+  let typed_inner = typecheck_and_convert inner in
   let not_exp = T.Unary (Not, typed_inner) in
   set_type not_exp Int
 
 and typecheck_complement inner =
-  let typed_inner = typecheck_exp inner in
+  let typed_inner = typecheck_and_convert inner in
   if typed_inner.t = Double || is_pointer typed_inner.t then
     failwith "Bitwise complement only valid for integer types"
   else
@@ -111,7 +116,7 @@ and typecheck_complement inner =
     set_type complement_exp typed_inner.t
 
 and typecheck_negate inner =
-  let typed_inner = typecheck_exp inner in
+  let typed_inner = typecheck_and_convert inner in
   match typed_inner.t with
   | Pointer _ -> failwith "Can't negate a pointer"
   | _ ->
@@ -119,16 +124,53 @@ and typecheck_negate inner =
       set_type negate_exp typed_inner.t
 
 and typecheck_logical op e1 e2 =
-  let typed_e1 = typecheck_exp e1 in
-  let typed_e2 = typecheck_exp e2 in
+  let typed_e1 = typecheck_and_convert e1 in
+  let typed_e2 = typecheck_and_convert e2 in
   let typed_binexp = T.Binary (op, typed_e1, typed_e2) in
   set_type typed_binexp Int
 
-and typecheck_arithmetic op e1 e2 =
-  let typed_e1 = typecheck_exp e1 in
-  let typed_e2 = typecheck_exp e2 in
+and typecheck_addition e1 e2 =
+  let typed_e1 = typecheck_and_convert e1 in
+  let typed_e2 = typecheck_and_convert e2 in
+  if is_arithmetic typed_e1.t && is_arithmetic typed_e2.t then
+    let common_type = get_common_type typed_e1.t typed_e2.t in
+    let converted_e1 = convert_to typed_e1 common_type in
+    let converted_e2 = convert_to typed_e2 common_type in
+    let add_exp = T.Binary (Add, converted_e1, converted_e2) in
+    set_type add_exp common_type
+  else if is_pointer typed_e1.t && is_integer typed_e2.t then
+    let converted_e2 = convert_to typed_e2 Types.Long in
+    let add_exp = T.Binary (Add, typed_e1, converted_e2) in
+    set_type add_exp typed_e1.t
+  else if is_pointer typed_e2.t && is_integer typed_e1.t then
+    let converted_e1 = convert_to typed_e1 Types.Long in
+    let add_exp = T.Binary (Add, converted_e1, typed_e2) in
+    set_type add_exp typed_e2.t
+  else failwith "invalid operands for addition"
+
+and typecheck_subtraction e1 e2 =
+  let typed_e1 = typecheck_and_convert e1 in
+  let typed_e2 = typecheck_and_convert e2 in
+  if is_arithmetic typed_e1.t && is_arithmetic typed_e2.t then
+    let common_type = get_common_type typed_e1.t typed_e2.t in
+    let converted_e1 = convert_to typed_e1 common_type in
+    let converted_e2 = convert_to typed_e2 common_type in
+    let sub_exp = T.Binary (Subtract, converted_e1, converted_e2) in
+    set_type sub_exp common_type
+  else if is_pointer typed_e1.t && is_integer typed_e2.t then
+    let converted_e2 = convert_to typed_e2 Types.Long in
+    let sub_exp = T.Binary (Subtract, typed_e1, converted_e2) in
+    set_type sub_exp typed_e1.t
+  else if is_pointer typed_e1.t && typed_e1.t = typed_e2.t then
+    let sub_exp = T.Binary (Subtract, typed_e1, typed_e2) in
+    set_type sub_exp Types.Long
+  else failwith "Invalid operands for subtraction"
+
+and typecheck_multiplicative op e1 e2 =
+  let typed_e1 = typecheck_and_convert e1 in
+  let typed_e2 = typecheck_and_convert e2 in
   if is_pointer typed_e1.t || is_pointer typed_e2.t then
-    failwith "arithmetic operations not permitted on pointers"
+    failwith "multiplicative operations not permitted on pointers"
   else
     let common_type = get_common_type typed_e1.t typed_e2.t in
     let converted_e1 = convert_to typed_e1 common_type in
@@ -136,17 +178,16 @@ and typecheck_arithmetic op e1 e2 =
     let binary_exp = T.Binary (op, converted_e1, converted_e2) in
     match op with
     | Mod when common_type = Double -> failwith "Can't apply % to double"
-    | Add | Subtract | Multiply | Divide | Mod ->
-        set_type binary_exp common_type
-    | op ->
+    | Multiply | Divide | Mod -> set_type binary_exp common_type
+    | _ ->
         failwith
           ("Internal error: "
           ^ T.show_binary_operator op
-          ^ " should be typechecked elsewhere.") [@coverage off]
+          ^ "isn't a multiplicative operator") [@coverage off]
 
-and typecheck_comparison op e1 e2 =
-  let typed_e1 = typecheck_exp e1 in
-  let typed_e2 = typecheck_exp e2 in
+and typecheck_equality op e1 e2 =
+  let typed_e1 = typecheck_and_convert e1 in
+  let typed_e2 = typecheck_and_convert e2 in
   let common_type =
     if is_pointer typed_e1.t || is_pointer typed_e2.t then
       get_common_pointer_type typed_e1 typed_e2
@@ -157,21 +198,34 @@ and typecheck_comparison op e1 e2 =
   let binary_exp = T.Binary (op, converted_e1, converted_e2) in
   set_type binary_exp Int
 
+and typecheck_comparison op e1 e2 =
+  let typed_e1 = typecheck_and_convert e1 in
+  let typed_e2 = typecheck_and_convert e2 in
+  let common_type =
+    if is_arithmetic typed_e1.t && is_arithmetic typed_e2.t then
+      get_common_type typed_e1.t typed_e2.t
+    else if is_pointer typed_e1.t && typed_e1.t = typed_e2.t then typed_e1.t
+    else failwith "invalid types for comparions"
+  in
+  let converted_e1 = convert_to typed_e1 common_type in
+  let converted_e2 = convert_to typed_e2 common_type in
+  let binary_exp = T.Binary (op, converted_e1, converted_e2) in
+  set_type binary_exp Int
+
 and typecheck_assignment lhs rhs =
-  match lhs with
-  | U.Dereference _ | Var _ ->
-      let typed_lhs = typecheck_exp lhs in
-      let lhs_type = get_type typed_lhs in
-      let typed_rhs = typecheck_exp rhs in
-      let converted_rhs = convert_by_assignment typed_rhs lhs_type in
-      let assign_exp = T.Assignment (typed_lhs, converted_rhs) in
-      set_type assign_exp lhs_type
-  | _ -> failwith "left hand side of assignment is invalid lvalue"
+  let typed_lhs = typecheck_and_convert lhs in
+  if is_lvalue typed_lhs then
+    let lhs_type = get_type typed_lhs in
+    let typed_rhs = typecheck_and_convert rhs in
+    let converted_rhs = convert_by_assignment typed_rhs lhs_type in
+    let assign_exp = T.Assignment (typed_lhs, converted_rhs) in
+    set_type assign_exp lhs_type
+  else failwith "left hand side of assignment is invalid lvalue"
 
 and typecheck_conditional condition then_exp else_exp =
-  let typed_conditon = typecheck_exp condition in
-  let typed_then = typecheck_exp then_exp in
-  let typed_else = typecheck_exp else_exp in
+  let typed_conditon = typecheck_and_convert condition in
+  let typed_then = typecheck_and_convert then_exp in
+  let typed_else = typecheck_and_convert else_exp in
   let common_type =
     if is_pointer typed_then.t || is_pointer typed_else.t then
       get_common_pointer_type typed_then typed_else
@@ -198,7 +252,7 @@ and typecheck_fun_call f args =
         failwith "Function called with wrong number of arguments"
       else ();
       let process_arg arg param_t =
-        convert_by_assignment (typecheck_exp arg) param_t
+        convert_by_assignment (typecheck_and_convert arg) param_t
       in
       let converted_args = List.map2 process_arg args param_types in
       let call_exp = T.FunCall { f; args = converted_args } in
@@ -206,7 +260,7 @@ and typecheck_fun_call f args =
   | _ -> failwith "Tried to use variable as function name"
 
 and typecheck_dereference inner =
-  let typed_inner = typecheck_exp inner in
+  let typed_inner = typecheck_and_convert inner in
   match get_type typed_inner with
   | Pointer referenced_t ->
       let deref_exp = T.Dereference typed_inner in
@@ -214,34 +268,108 @@ and typecheck_dereference inner =
   | _ -> failwith "Tried to dereference non-pointer"
 
 and typecheck_addr_of inner =
-  match inner with
-  | U.Dereference _ | U.Var _ ->
-      let typed_inner = typecheck_exp inner in
-      let inner_t = get_type typed_inner in
-      let addr_exp = T.AddrOf typed_inner in
-      set_type addr_exp (Pointer inner_t)
-  | _ -> failwith "Cannot take address of non-value"
+  let typed_inner = typecheck_exp inner in
+  if is_lvalue typed_inner then
+    let inner_t = get_type typed_inner in
+    let addr_exp = T.AddrOf typed_inner in
+    set_type addr_exp (Pointer inner_t)
+  else failwith "Cannot take address of non-value"
 
-let to_static_init var_type = function
-  | U.Constant c ->
+and typecheck_subscript e1 e2 =
+  let typed_e1 = typecheck_and_convert e1 in
+  let typed_e2 = typecheck_and_convert e2 in
+  let ptr_type, converted_e1, converted_e2 =
+    if is_pointer typed_e1.t && is_integer typed_e2.t then
+      (typed_e1.t, typed_e1, convert_to typed_e2 Types.Long)
+    else if is_pointer typed_e2.t && is_integer typed_e1.t then
+      (typed_e2.t, convert_to typed_e1 Long, typed_e2)
+    else failwith "Invalid types for subscript operation"
+  in
+  let result_type =
+    match ptr_type with
+    | Pointer referenced -> referenced
+    | _ -> failwith "Internal error typechecking subscript" [@coverage off]
+  in
+  let subscript_exp =
+    T.Subscript { ptr = converted_e1; index = converted_e2 }
+  in
+  set_type subscript_exp result_type
+
+and typecheck_and_convert e =
+  let typed_e = typecheck_exp e in
+  match typed_e.t with
+  | Types.Array { elem_type; _ } ->
+      let addr_exp = T.AddrOf typed_e in
+      set_type addr_exp (Pointer elem_type)
+  | _ -> typed_e
+
+let rec static_init_helper var_type init =
+  match (var_type, init) with
+  | Types.Array _, U.SingleInit _ ->
+      failwith "Can't initialize array from scalar value"
+  | _, U.SingleInit (U.Constant c) when is_zero_int c ->
+      Initializers.zero var_type
+  | Types.Pointer _, _ -> failwith "invalid static initializer for pointer"
+  | _, U.SingleInit (U.Constant c) ->
       let init_val =
-        if is_pointer var_type then
-          if is_null_pointer_constant (T.Constant c) then
-            Initializers.ULongInit UInt64.zero
-          else
-            failwith
-              "Static pointers can only be initialized with null pointer \
-               constants"
-        else
-          match Const_convert.const_convert var_type c with
-          | ConstInt i -> Initializers.IntInit i
-          | ConstLong l -> Initializers.LongInit l
-          | ConstUInt u -> Initializers.UIntInit u
-          | ConstULong ul -> Initializers.ULongInit ul
-          | ConstDouble d -> Initializers.DoubleInit d
+        match Const_convert.const_convert var_type c with
+        | Const.ConstInt i -> Initializers.IntInit i
+        | Const.ConstLong l -> Initializers.LongInit l
+        | Const.ConstUInt ui -> UIntInit ui
+        | Const.ConstULong ul -> ULongInit ul
+        | Const.ConstDouble d -> DoubleInit d
       in
-      Symbols.Initial init_val
-  | _ -> failwith "Non-constant initializer on static variable"
+      [ init_val ]
+  | _, U.SingleInit _ -> failwith "non-constant initializer"
+  | Array { elem_type; size }, U.CompoundInit inits ->
+      let static_inits = List.concat_map (static_init_helper elem_type) inits in
+      let padding =
+        match size - List.length inits with
+        | 0 -> []
+        | n when n > 0 ->
+            let zero_bytes = get_size elem_type * n in
+            [ Initializers.ZeroInit zero_bytes ]
+        | _ -> failwith "Too many values in static initializer"
+      in
+      static_inits @ padding
+  | _, U.CompoundInit _ ->
+      failwith "Can't use compound initializer for object with scalar type"
+
+let to_static_init var_type init =
+  let init_list = static_init_helper var_type init in
+  Symbols.Initial init_list
+
+let rec make_zero_init t =
+  let scalar c = T.SingleInit { e = Constant c; t } in
+  match t with
+  | Types.Array { elem_type; size } as t ->
+      T.CompoundInit (t, Utils.make_list size (make_zero_init elem_type))
+  | Types.Int -> scalar (Const.ConstInt Int32.zero)
+  | UInt -> scalar (Const.ConstUInt UInt32.zero)
+  | Long -> scalar (Const.ConstLong Int64.zero)
+  | ULong | Pointer _ -> scalar (Const.ConstULong UInt64.zero)
+  | Double -> scalar (Const.ConstDouble Float.zero)
+  | FunType _ ->
+      failwith
+        "Internal error: can't create zero initializer with function type"
+      [@coverage off]
+
+let rec typecheck_init target_type init =
+  match (target_type, init) with
+  | _, U.SingleInit e ->
+      let typechecked_e = typecheck_and_convert e in
+      let cast_exp = convert_by_assignment typechecked_e target_type in
+      T.SingleInit cast_exp
+  | Types.Array { elem_type; size }, CompoundInit inits ->
+      if List.length inits > size then
+        failwith "too mahy values in initializer "
+      else
+        let typechecked_inits = List.map (typecheck_init elem_type) inits in
+        let padding =
+          Utils.make_list (size - List.length inits) (make_zero_init elem_type)
+        in
+        T.CompoundInit (target_type, typechecked_inits @ padding)
+  | _ -> failwith "Can't initializer scalar value from compound initializer"
 
 let rec typecheck_block ret_type (U.Block b) =
   T.Block (List.map (typecheck_block_item ret_type) b)
@@ -252,13 +380,13 @@ and typecheck_block_item ret_type = function
 
 and typecheck_statement ret_type = function
   | Return e ->
-      let typed_e = typecheck_exp e in
+      let typed_e = typecheck_and_convert e in
       Return (convert_by_assignment typed_e ret_type)
-  | Expression e -> Expression (typecheck_exp e)
+  | Expression e -> Expression (typecheck_and_convert e)
   | If { condition; then_clause; else_clause } ->
       If
         {
-          condition = typecheck_exp condition;
+          condition = typecheck_and_convert condition;
           then_clause = typecheck_statement ret_type then_clause;
           else_clause = Option.map (typecheck_statement ret_type) else_clause;
         }
@@ -266,7 +394,7 @@ and typecheck_statement ret_type = function
   | While { condition; body; id } ->
       While
         {
-          condition = typecheck_exp condition;
+          condition = typecheck_and_convert condition;
           body = typecheck_statement ret_type body;
           id;
         }
@@ -274,7 +402,7 @@ and typecheck_statement ret_type = function
       DoWhile
         {
           body = typecheck_statement ret_type body;
-          condition = typecheck_exp condition;
+          condition = typecheck_and_convert condition;
           id;
         }
   | For { init; condition; post; body; id } ->
@@ -284,13 +412,13 @@ and typecheck_statement ret_type = function
             failwith
               "Storage class not permitted on declaration in for loop header"
         | InitDecl d -> T.InitDecl (typecheck_local_var_decl d)
-        | InitExp e -> InitExp (opt_typecheck typecheck_exp e)
+        | InitExp e -> InitExp (opt_typecheck typecheck_and_convert e)
       in
       For
         {
           init = typechecked_for_init;
-          condition = opt_typecheck typecheck_exp condition;
-          post = opt_typecheck typecheck_exp post;
+          condition = opt_typecheck typecheck_and_convert condition;
+          post = opt_typecheck typecheck_and_convert post;
           body = typecheck_statement ret_type body;
           id;
         }
@@ -329,10 +457,24 @@ and typecheck_local_var_decl ({ name; init; storage_class; var_type } as vd) =
       T.{ name; init = None; storage_class; var_type }
   | None ->
       Symbols.add_automatic_var name ~t:var_type;
-      let convert_init e = convert_by_assignment (typecheck_exp e) var_type in
-      { vd with init = opt_typecheck convert_init init }
+      { vd with init = opt_typecheck (typecheck_init var_type) init }
 
 and typecheck_fn_decl { name; fun_type; params; body; storage_class } =
+  let adjust_param_type = function
+    | Types.Array { elem_type; _ } -> Types.Pointer elem_type
+    | t -> t
+  in
+  let param_ts, return_t, fun_type =
+    match fun_type with
+    | Types.FunType { ret_type = Array _; _ } ->
+        failwith "A function cannot return an array"
+    | Types.FunType { param_types; ret_type } ->
+        let param_types = List.map adjust_param_type param_types in
+        (param_types, ret_type, Types.FunType { param_types; ret_type })
+    | _ ->
+        failwith "Internal error, function has non-function type"
+        [@coverage off]
+  in
   let has_body = Option.is_some body in
   let global = storage_class <> Some Static in
   (* helper function to reconcile current and previous declarations *)
@@ -362,13 +504,7 @@ and typecheck_fn_decl { name; fun_type; params; body; storage_class } =
   in
 
   Symbols.add_fun name ~t:fun_type ~defined ~global;
-  let param_ts, return_t =
-    match fun_type with
-    | Types.FunType { param_types; ret_type } -> (param_types, ret_type)
-    | _ ->
-        failwith "Internal error, function has non-function type"
-        [@coverage off]
-  in
+
   if has_body then
     List.iter2 (fun p t -> Symbols.add_automatic_var p ~t) params param_ts
   else ();

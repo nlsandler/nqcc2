@@ -11,7 +11,11 @@ let is_larger_than_uint imm =
   imm > max_i || imm < int32_min
 
 let is_constant = function Imm _ -> true | _ -> false
-let is_memory = function Memory _ | Data _ -> true | _ -> false
+
+let is_memory = function
+  | Memory _ | Data _ -> true
+  | Indexed _ -> true
+  | _ -> false
 
 let is_xmm = function
   | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7 | XMM14 | XMM15 ->

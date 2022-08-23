@@ -4,6 +4,8 @@ let rec take_drop n = function
       (h :: l1, l2)
   | l -> ([], l)
 
+(* Construct a list with len elements of value v*)
+let make_list len v = List.init len (fun _ -> v)
 let%test "empty_0" = take_drop 0 [] = ([], [])
 let%test "empty_n" = take_drop 10 [] = ([], [])
 let%test "one" = take_drop 1 [ 'a'; 'b'; 'c' ] = ([ 'a' ], [ 'b'; 'c' ])

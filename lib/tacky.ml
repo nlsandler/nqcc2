@@ -16,7 +16,10 @@ type binary_operator =
   | GreaterOrEqual
 [@@deriving show]
 
-type tacky_val = Constant of Const.t | Var of string [@@deriving show]
+type tacky_val = Constant of Const.t | Var of string
+
+let show_tacky_val = function Constant c -> Const.show c | Var v -> v
+let pp_tacky_val fmt v = Format.pp_print_string fmt (show_tacky_val v)
 
 type instruction =
   | Return of tacky_val
@@ -38,12 +41,19 @@ type instruction =
   | GetAddress of { src : tacky_val; dst : tacky_val }
   | Load of { src_ptr : tacky_val; dst : tacky_val }
   | Store of { src : tacky_val; dst_ptr : tacky_val }
+  | AddPtr of {
+      ptr : tacky_val;
+      index : tacky_val;
+      scale : int;
+      dst : tacky_val;
+    }
+  | CopyToOffset of { src : tacky_val; dst : string; offset : int }
   | Jump of string
   | JumpIfZero of tacky_val * string
   | JumpIfNotZero of tacky_val * string
   | Label of string
   | FunCall of { f : string; args : tacky_val list; dst : tacky_val }
-[@@deriving show]
+[@@deriving show { with_path = false }]
 
 type top_level =
   | Function of {
@@ -56,8 +66,10 @@ type top_level =
       name : string;
       t : Types.t;
       global : bool;
-      init : Initializers.static_init;
+      init : Initializers.static_init list;
     }
 [@@deriving show]
 
 type t = Program of top_level list [@@deriving show]
+
+[@@@coverage exclude_file]

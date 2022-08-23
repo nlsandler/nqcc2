@@ -52,4 +52,6 @@ type t =
   | Colon
   | Comma
   | Ampersand
+  | OpenBracket
+  | CloseBracket
 [@@deriving show]
