@@ -7,9 +7,17 @@ type t =
   | ConstLong of Int64.t
   | ConstUInt of UInt32.t
   | ConstULong of UInt64.t
-  | ConstDouble of
-      (Float.t[@printer fun fmt dbl -> Format.fprintf fmt "%.54g" dbl])
-[@@deriving show]
+  | ConstDouble of Float.t
+
+(* print functions for debugging *)
+let show = function
+  | ConstInt i -> Int32.to_string i
+  | ConstLong l -> Int64.to_string l ^ "L"
+  | ConstUInt u -> UInt32.to_string u ^ "U"
+  | ConstULong ul -> UInt64.to_string ul ^ "UL"
+  | ConstDouble d -> Format.sprintf "%.54g" d
+
+let pp fmt cnst = Format.pp_print_string fmt (show cnst)
 
 [@@@coverage on]
 

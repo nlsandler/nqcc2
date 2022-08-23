@@ -28,12 +28,17 @@ let convert_val = function
   | Tacky.Constant (ConstUInt u) -> Imm (UInt32.to_int64 u)
   | Tacky.Constant (ConstULong ul) -> Imm (UInt64.to_int64 ul)
   | Tacky.Constant (ConstDouble d) -> Data (add_constant d)
-  | Tacky.Var v -> Assembly.Pseudo v
+  | Tacky.Var v ->
+      if Type_utils.is_array (Symbols.get v).t then PseudoMem (v, 0)
+      else Assembly.Pseudo v
 
 let convert_type = function
   | Types.Int | UInt -> Assembly.Longword
   | Long | ULong | Pointer _ -> Quadword
   | Double -> Double
+  | Array _ as t ->
+      ByteArray
+        { size = Type_utils.get_size t; alignment = Type_utils.get_alignment t }
   | FunType _ ->
       failwith "Internal error, converting function type to assembly"
       [@coverage off]
@@ -376,6 +381,36 @@ let convert_instruction = function
           Binary { op = Add; t = Quadword; src = r; dst = asm_dst };
           Label end_lbl;
         ]
+  | CopyToOffset { src; dst; offset } ->
+      [ Mov (asm_type src, convert_val src, PseudoMem (dst, offset)) ]
+  | AddPtr { ptr; index = Constant (Const.ConstLong c); scale; dst } ->
+      (* note that typechecker converts index to long
+       * QUESTION: what's the largest offset we should support? *)
+      let i = Int64.to_int c in
+      [
+        Mov (Quadword, convert_val ptr, Reg R9);
+        Lea (Memory (R9, i * scale), convert_val dst);
+      ]
+  | AddPtr { ptr; index; scale; dst } ->
+      if scale = 1 || scale = 2 || scale = 4 || scale = 8 then
+        [
+          Mov (Quadword, convert_val ptr, Reg R8);
+          Mov (Quadword, convert_val index, Reg R9);
+          Lea (Indexed { base = R8; index = R9; scale }, convert_val dst);
+        ]
+      else
+        [
+          Mov (Quadword, convert_val ptr, Reg R8);
+          Mov (Quadword, convert_val index, Reg R9);
+          Binary
+            {
+              op = Mult;
+              t = Quadword;
+              src = Imm (Int64.of_int scale);
+              dst = Reg R9;
+            };
+          Lea (Indexed { base = R8; index = R9; scale = 1 }, convert_val dst);
+        ]
 
 let pass_params param_list =
   let int_reg_params, dbl_reg_params, stack_params =
@@ -399,6 +434,18 @@ let pass_params param_list =
   @ List.mapi pass_in_dbl_register dbl_reg_params
   @ List.mapi pass_on_stack stack_params
 
+(* Special-case logic to get type/alignment of array; array variables w/ size
+   >=16 bytes have alignment of 16 *)
+let get_var_alignment = function
+  | Types.Array _ as t when Type_utils.get_size t >= 16 -> 16
+  | t -> Type_utils.get_alignment t
+
+let convert_var_type = function
+  | Types.Array _ as t ->
+      Assembly.ByteArray
+        { size = Type_utils.get_size t; alignment = get_var_alignment t }
+  | other -> convert_type other
+
 let convert_top_level = function
   | Tacky.Function { name; global; body; params } ->
       let params_as_tacky = List.map (fun name -> Tacky.Var name) params in
@@ -408,7 +455,7 @@ let convert_top_level = function
       Assembly.Function { name; global; instructions }
   | Tacky.StaticVariable { name; global; t; init } ->
       Assembly.StaticVariable
-        { name; global; alignment = Type_utils.get_alignment t; init }
+        { name; global; alignment = get_var_alignment t; init }
 
 let convert_constant (key, (name, alignment)) =
   let dbl = Int64.float_of_bits key in
@@ -421,8 +468,8 @@ let convert_symbol name = function
   | Symbols.{ t = Types.FunType _; attrs = FunAttr { defined; _ } } ->
       Assembly_symbols.add_fun name defined
   | Symbols.{ t; attrs = StaticAttr _; _ } ->
-      Assembly_symbols.add_var name (convert_type t) true
-  | Symbols.{ t; _ } -> Assembly_symbols.add_var name (convert_type t) false
+      Assembly_symbols.add_var name (convert_var_type t) true
+  | Symbols.{ t; _ } -> Assembly_symbols.add_var name (convert_var_type t) false
 
 let gen (Tacky.Program top_levels) =
   (* clear the hashtable (necessary if we're compiling multiple source) *)

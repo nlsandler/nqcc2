@@ -22,7 +22,7 @@ module Ops = struct
   [@@deriving show]
 end
 
-(** Exp AST definition without type info *)
+(** Exp and initializer AST definitions without type info *)
 module UntypedExp = struct
   include Ops
 
@@ -37,10 +37,14 @@ module UntypedExp = struct
     | FunCall of { f : string; args : exp list }
     | Dereference of exp
     | AddrOf of exp
+    | Subscript of { ptr : exp; index : exp }
+  [@@deriving show]
+
+  type initializr = SingleInit of exp | CompoundInit of initializr list
   [@@deriving show]
 end
 
-(** Exp AST definition with type info - see Listing 11-9 *)
+(** Exp and initializer AST definitions with type info - see Listing 11-9 *)
 module TypedExp = struct
   include Ops
 
@@ -55,21 +59,34 @@ module TypedExp = struct
     | FunCall of { f : string; args : exp list }
     | Dereference of exp
     | AddrOf of exp
+    | Subscript of { ptr : exp; index : exp }
   [@@deriving show]
 
   and exp = { e : inner_exp; t : Types.t } [@@deriving show]
+
+  type initializr =
+    | SingleInit of exp
+    (* Compound initializers, like expressions, need type annotations *)
+    | CompoundInit of Types.t * initializr list
+  [@@deriving show]
 end
 
 (** [EXP] is an interface that [TypedExp] and [UntypedExp] both satisfy - we use
     it below to construct AST definitions for block items that can accept either
-    typed or untyped expressions *)
+    typed or untyped expressions/initializers *)
 module type EXP = sig
   type exp
   (** The AST definition of an expression *)
 
+  type initializr
+  (** The AST definition of an initializer *)
+
   val pp_exp : Format.formatter -> exp -> unit
   (** A pretty printer for exp, produced by [@@deriving show]. We need this to
       automatically derive pretty printers for other types that use [exp] *)
+
+  val pp_initializr : Format.formatter -> initializr -> unit
+  (** A pretty printer for initializr, produced by [@@deriving show ]*)
 end
 
 (** We put storage_class in its own module instead of defining it in
@@ -101,7 +118,7 @@ module BlockItems (Exp : EXP) = struct
   type variable_declaration = {
     name : string;
     var_type : Types.t;
-    init : exp option;
+    init : initializr option;
     storage_class : storage_class option;
   }
   [@@deriving show]

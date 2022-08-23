@@ -7,6 +7,20 @@ type replacement_state = {
   offset_map : int StringMap.t; (* map from pseudoregister to stack slots *)
 }
 
+let calculate_offset state name =
+  let size = Assembly_symbols.get_size name in
+  let alignment = Assembly_symbols.get_alignment name in
+  let new_offset =
+    Rounding.round_away_from_zero alignment (state.current_offset - size)
+  in
+  let new_state =
+    {
+      current_offset = new_offset;
+      offset_map = StringMap.add name new_offset state.offset_map;
+    }
+  in
+  (new_state, new_offset)
+
 let replace_operand state = function
   (* if it's a pseudoregister, replace it with a stack slot *)
   | Pseudo s -> (
@@ -18,19 +32,23 @@ let replace_operand state = function
         (* We haven't already assigned it a stack slot;
          * assign it and update state *)
         | None ->
-            let size = Assembly_symbols.get_size s in
-            let alignment = Assembly_symbols.get_alignment s in
-            let new_offset =
-              Rounding.round_away_from_zero alignment
-                (state.current_offset - size)
-            in
-            let new_state =
-              {
-                current_offset = new_offset;
-                offset_map = StringMap.add s new_offset state.offset_map;
-              }
-            in
+            let new_state, new_offset = calculate_offset state s in
             (new_state, Memory (BP, new_offset)))
+  | PseudoMem (s, offset) when Assembly_symbols.is_static s ->
+      if offset = 0 then (state, Data s)
+      else
+        failwith
+          "Internal error: shouldn't have static variables with non-zero \
+           offset at this point" [@coverage off]
+  | PseudoMem (s, offset) -> (
+      match StringMap.find_opt s state.offset_map with
+      (* We've already assigned this operand a stack slot *)
+      | Some var_offset -> (state, Memory (BP, offset + var_offset))
+      | None ->
+          (* assign s a stack slot, and add its offset to the offset w/in s to
+             get new operand *)
+          let new_state, new_var_offset = calculate_offset state s in
+          (new_state, Memory (BP, offset + new_var_offset)))
   (* not a pseudo, so nothing to do *)
   | other -> (state, other)
 

@@ -42,6 +42,9 @@ let rec resolve_exp id_map = function
       with Not_found -> failwith "Undeclared function!")
   | Dereference inner -> Dereference (resolve_exp id_map inner)
   | AddrOf inner -> AddrOf (resolve_exp id_map inner)
+  | Subscript { ptr; index } ->
+      Subscript
+        { ptr = resolve_exp id_map ptr; index = resolve_exp id_map index }
   (* Nothing to do for constant *)
   | Constant _ as c -> c
 
@@ -70,13 +73,18 @@ let resolve_local_var_helper id_map name storage_class =
   let new_map = StringMap.add name entry id_map in
   (new_map, entry.unique_name)
 
+let rec resolve_initializer id_map = function
+  | SingleInit e -> SingleInit (resolve_exp id_map e)
+  | CompoundInit inits ->
+      CompoundInit (List.map (resolve_initializer id_map) inits)
+
 let resolve_local_var_declaration id_map { name; var_type; init; storage_class }
     =
   let new_map, unique_name =
     resolve_local_var_helper id_map name storage_class
   in
 
-  let resolved_init = Option.map (resolve_exp new_map) init in
+  let resolved_init = Option.map (resolve_initializer new_map) init in
   (* return new map and resolved declaration *)
   ( new_map,
     { name = unique_name; var_type; init = resolved_init; storage_class } )

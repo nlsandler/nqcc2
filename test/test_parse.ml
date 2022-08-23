@@ -11,7 +11,7 @@ let%expect_test "signed long constant" =
   in
   let c = Parse.Private.parse_const tok_list in
   print_const c;
-  [%expect "(Const.ConstLong 4611686018427387904L)"]
+  [%expect "4611686018427387904L"]
 
 let%expect_test "unsigned int constant" =
   let tok_list =
@@ -19,7 +19,7 @@ let%expect_test "unsigned int constant" =
   in
   let c = Parse.Private.parse_const tok_list in
   print_const c;
-  [%expect "(Const.ConstUInt 4294967291)"]
+  [%expect "4294967291U"]
 
 let%expect_test "unsigned long constant" =
   let tok_list =
@@ -28,7 +28,7 @@ let%expect_test "unsigned long constant" =
   in
   let c = Parse.Private.parse_const tok_list in
   print_const c;
-  [%expect "(Const.ConstULong 18446744073709551611)"]
+  [%expect "18446744073709551611UL"]
 
 let%test "expression" =
   Parse.Private.parse_exp 40

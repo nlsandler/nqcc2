@@ -3,6 +3,14 @@ open Tacky
 
 let comma_sep out () = Format.fprintf out ", "
 
+let pp_init_list out init_list =
+  Format.open_box 0;
+  Format.pp_print_string out "{";
+  Format.pp_print_list ~pp_sep:comma_sep Initializers.pp_static_init out
+    init_list;
+  Format.pp_print_string out "}";
+  Format.close_box ()
+
 let pp_unary_operator out = function
   | Complement -> Format.pp_print_string out "~"
   | Negate -> Format.pp_print_string out "-"
@@ -78,6 +86,11 @@ let pp_instruction out = function
       Format.fprintf out "%a = Load(%a)" pp_tacky_val dst pp_tacky_val src_ptr
   | Store { src; dst_ptr } ->
       Format.fprintf out "*(%a) = %a" pp_tacky_val dst_ptr pp_tacky_val src
+  | AddPtr { ptr; index; scale; dst } ->
+      Format.fprintf out "%a = %a + %a * %d" pp_tacky_val dst pp_tacky_val ptr
+        pp_tacky_val index scale
+  | CopyToOffset { src; dst; offset } ->
+      Format.fprintf out "%s[offset = %d] = %a" dst offset pp_tacky_val src
 
 let pp_function_definition global name params out body =
   Format.pp_open_vbox out 0;
@@ -97,8 +110,7 @@ let pp_tl out = function
   | StaticVariable { global; name; init; t } ->
       Format.pp_open_vbox out 0;
       if global then Format.pp_print_string out "global ";
-      Format.fprintf out "%a %s = %a" Types.pp t name
-        Initializers.pp_static_init init;
+      Format.fprintf out "%a %s = %a" Types.pp t name pp_init_list init;
       Format.pp_close_box out ()
 
 let pp_program out (Program tls) =

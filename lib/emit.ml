@@ -1,7 +1,13 @@
 open Unsigned
 open Assembly
 
-let suffix = function Longword -> "l" | Quadword -> "q" | Double -> "sd"
+let suffix = function
+  | Longword -> "l"
+  | Quadword -> "q"
+  | Double -> "sd"
+  | ByteArray _ ->
+      failwith "Internal error: found instruction w/ non-scalar operand type"
+      [@coverage off]
 
 let align_directive =
   match !Settings.platform with OS_X -> ".balign" | Linux -> ".align"
@@ -70,7 +76,10 @@ let show_operand t = function
       match t with
       | Longword -> show_long_reg r
       | Quadword -> show_quadword_reg r
-      | Double -> show_double_reg r)
+      | Double -> show_double_reg r
+      | ByteArray _ ->
+          failwith "Internal error: can't store non-scalar operand in register"
+          [@coverage off])
   | Imm i -> Printf.sprintf "$%s" (Int64.to_string i)
   | Memory (r, 0) -> Printf.sprintf "(%s)" (show_quadword_reg r)
   | Memory (r, i) -> Printf.sprintf "%d(%s)" i (show_quadword_reg r)
@@ -80,8 +89,13 @@ let show_operand t = function
         else show_label name
       in
       Printf.sprintf "%s(%%rip)" lbl
+  | Indexed { base; index; scale } ->
+      Printf.sprintf "(%s, %s, %d)" (show_quadword_reg base)
+        (show_quadword_reg index) scale
   (* printing out pseudoregisters is only for debugging *)
   | Pseudo name -> Printf.sprintf "%%%s" name [@coverage off]
+  | PseudoMem (name, offset) ->
+      Printf.sprintf "%d(%%%s)" offset name [@coverage off]
 
 let show_byte_reg = function
   | AX -> "%al"
@@ -191,8 +205,9 @@ let emit_instruction chan = function
     popq %%rbp
     ret
 |}
-  | Cdq Double ->
-      failwith "Internal error: can't apply cdq to double type" [@coverage off]
+  | Cdq (Double | ByteArray _) ->
+      failwith "Internal error: can't apply cdq to non-integer type"
+      [@coverage off]
   | MovZeroExtend _ ->
       failwith
         "Internal error: MovZeroExtend should have been removed in instruction \
@@ -201,13 +216,6 @@ let emit_instruction chan = function
 let emit_global_directive chan global label =
   if global then Printf.fprintf chan "\t.globl %s\n" label else ()
 
-let emit_zero_init chan = function
-  | Initializers.IntInit _ | UIntInit _ -> Printf.fprintf chan "\t.zero 4\n"
-  | LongInit _ | ULongInit _ -> Printf.fprintf chan "\t.zero 8\n"
-  | DoubleInit _ ->
-      failwith "internal error: shoud never use zeroinit for doubles"
-      [@coverage off]
-
 let emit_init chan = function
   | Initializers.IntInit i ->
       Printf.fprintf chan "\t.long %s\n" (Int32.to_string i)
@@ -215,6 +223,9 @@ let emit_init chan = function
   | UIntInit u -> Printf.fprintf chan "\t.long %s\n" (UInt32.to_string u)
   | ULongInit l -> Printf.fprintf chan "\t.quad %s\n" (UInt64.to_string l)
   | DoubleInit d -> Printf.fprintf chan "\t.quad %Ld\n" (Int64.bits_of_float d)
+  (* a partly-initialized array can include a mix of zero and non-zero
+     initializaers *)
+  | ZeroInit byte_count -> Printf.fprintf chan "\t.zero %d\n" byte_count
 
 let emit_constant chan name alignment init =
   let constant_section_name =
@@ -255,7 +266,7 @@ let emit_tl chan = function
       List.iter (emit_instruction chan) instructions
   | StaticVariable { name; global; init; alignment }
   (* is_zero is false for all doubles*)
-    when Initializers.is_zero init ->
+    when List.for_all Initializers.is_zero init ->
       let label = show_label name in
       emit_global_directive chan global label;
       Printf.fprintf chan
@@ -265,7 +276,7 @@ let emit_tl chan = function
 %s:
 |}
         align_directive alignment label;
-      emit_zero_init chan init
+      List.iter (emit_init chan) init
   | StaticVariable { name; global; init; alignment } ->
       let label = show_label name in
       emit_global_directive chan global label;
@@ -275,7 +286,7 @@ let emit_tl chan = function
 %s:
 |} align_directive alignment
         label;
-      emit_init chan init
+      List.iter (emit_init chan) init
   | StaticConstant { name; alignment; init } ->
       emit_constant chan name alignment init
 

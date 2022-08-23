@@ -21,9 +21,10 @@ let const_of_int64 v = function
   | T.UInt -> C.ConstUInt (UInt32.of_int64 v)
   | T.ULong | T.Pointer _ -> C.ConstULong (UInt64.of_int64 v)
   | T.Double -> C.ConstDouble (Int64.to_float v)
-  | T.FunType _ ->
-      failwith "Internal error: can't convert constant to function type"
-      [@coverage off]
+  | (T.FunType _ | T.Array _) as t ->
+      failwith
+        ("Internal error: can't convert constant to non_scalar type "
+        ^ Types.show t) [@coverage off]
 
 let const_convert target_type c =
   if C.type_of_const c = target_type then c

@@ -127,6 +127,8 @@ let token_defs =
     def ":" (literal T.Colon);
     def "," (literal T.Comma);
     def "&" (literal T.Ampersand);
+    def {_|\[|_} (literal T.OpenBracket);
+    def {_|\]|_} (literal T.CloseBracket);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)
