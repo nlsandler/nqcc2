@@ -8,19 +8,13 @@ type static_init =
   | UIntInit of UInt32.t
   | ULongInit of UInt64.t
   | DoubleInit of Float.t
+  (* zero out arbitrary number of bytes *)
+  | ZeroInit of int
 [@@deriving show]
 
 [@@@coverage on]
 
-let zero = function
-  | Types.Int -> IntInit Int32.zero
-  | Long -> LongInit Int64.zero
-  | UInt -> UIntInit UInt32.zero
-  | ULong | Pointer _ -> ULongInit UInt64.zero
-  | Double -> DoubleInit Float.zero
-  | FunType _ ->
-      failwith "Internal error: zero doesn't make sense for function type"
-      [@coverage off]
+let zero t = [ ZeroInit (Type_utils.get_size t) ]
 
 let is_zero = function
   | IntInit i -> i = Int32.zero
@@ -29,3 +23,4 @@ let is_zero = function
   | ULongInit ul -> ul = UInt64.zero
   (* NOTE: consider all doubles non-zero since we don't know if it's zero or negative zero *)
   | DoubleInit _ -> false
+  | ZeroInit _ -> true
