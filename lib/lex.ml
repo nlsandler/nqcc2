@@ -52,6 +52,7 @@ let convert_identifier = function
   | "unsigned" -> T.KWUnsigned
   | "signed" -> T.KWSigned
   | "double" -> T.KWDouble
+  | "char" -> T.KWChar
   | other -> T.Identifier other
 
 let convert_int s = T.ConstInt (Z.of_string s)
@@ -72,6 +73,16 @@ let convert_ulong s =
   T.ConstULong (Z.of_string const_str)
 
 let convert_double s = T.ConstDouble (Float.of_string s)
+
+let convert_char s =
+  (* remove open and close quotes from matched input *)
+  let ch = s |> StringUtil.chop_suffix |> StringUtil.drop 1 in
+  T.ConstChar ch
+
+let convert_string s =
+  (* remove open and close quotes from matched input *)
+  let str = s |> StringUtil.chop_suffix |> StringUtil.drop 1 in
+  T.StringLiteral str
 
 (** List of token definitions
 
@@ -96,6 +107,9 @@ let token_defs =
     def ~group:1
       {_|(([0-9]*\.[0-9]+|[0-9]+\.?)[Ee][+-]?[0-9]+|[0-9]*\.[0-9]+|[0-9]+\.)[^\w.]|_}
       convert_double;
+    def {_|'([^'\\\n]|\\['"?\\abfnrtv])'|_} convert_char;
+    (* string literals *)
+    def {_|"([^"\\\n]|\\['"\\?abfnrtv])*"|_} convert_string;
     (* punctuation *)
     def {_|\(|_} (literal T.OpenParen);
     def {_|\)|_} (literal T.CloseParen);

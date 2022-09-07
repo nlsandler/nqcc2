@@ -13,6 +13,7 @@
   emit
   initializers
   instruction_fixup
+  int8
   label_loops
   lex
   parse
@@ -33,6 +34,6 @@
   utils)
  (libraries re camlp-streams zarith integers)
  (preprocess
-  (pps ppx_deriving.show))
+  (pps ppx_deriving.show ppx_deriving.eq ppx_deriving.ord))
  (instrumentation
   (backend bisect_ppx)))

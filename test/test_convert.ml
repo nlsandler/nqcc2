@@ -140,3 +140,58 @@ let%expect_test "ulong to double round to odd" =
   let ul = Const.ConstULong (UInt64.of_string "9223372036854776832") in
   convert_and_print ~target_type:Types.Double ul;
   [%expect "9223372036854775808"]
+
+let%expect_test "signed char to long" =
+  let c = Const.ConstChar (Int8.of_int (-10)) in
+  convert_and_print ~target_type:Types.Long c;
+  [%expect "-10L"]
+
+let%expect_test "signed char to ulong" =
+  let c = Const.ConstChar (Int8.of_int (-10)) in
+  convert_and_print ~target_type:Types.ULong c;
+  [%expect "18446744073709551606UL"]
+
+let%expect_test "unsigned char to int" =
+  let c = Const.ConstUChar (UInt8.of_int 255) in
+  convert_and_print ~target_type:Types.Int c;
+  [%expect "255"]
+
+let%expect_test "signed char to double" =
+  let c = Const.ConstChar (Int8.of_int (-70)) in
+  convert_and_print ~target_type:Types.Double c;
+  [%expect "-70"]
+
+let%expect_test "unsigned char to double" =
+  let c = Const.ConstUChar (UInt8.of_int 200) in
+  convert_and_print ~target_type:Types.Double c;
+  [%expect "200"]
+
+let%expect_test "long to char" =
+  let l = Const.ConstLong (-1000L) in
+  convert_and_print ~target_type:Types.SChar l;
+  [%expect "24"]
+
+let%expect_test "uint to char" =
+  let ui = Const.ConstUInt (UInt32.of_int64 2147483858L) in
+  convert_and_print ~target_type:Types.Char ui;
+  [%expect "-46"]
+
+let%expect_test "ulong to uchar" =
+  let ul = Const.ConstULong (UInt64.of_string "18446744073709551606") in
+  convert_and_print ~target_type:Types.UChar ul;
+  [%expect "246"]
+
+let%expect_test "int to uchar" =
+  let i = Const.ConstInt 356l in
+  convert_and_print ~target_type:Types.UChar i;
+  [%expect "100"]
+
+let%expect_test "double to char" =
+  let d = Const.ConstDouble (-100.8) in
+  convert_and_print ~target_type:Types.Char d;
+  [%expect "-100"]
+
+let%expect_test "double to uchar" =
+  let d = Const.ConstDouble 250.1234 in
+  convert_and_print ~target_type:Types.UChar d;
+  [%expect "250"]

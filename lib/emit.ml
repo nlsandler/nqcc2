@@ -1,7 +1,9 @@
 open Unsigned
 open Assembly
+open Utils
 
 let suffix = function
+  | Byte -> "b"
   | Longword -> "l"
   | Quadword -> "q"
   | Double -> "sd"
@@ -71,32 +73,6 @@ let show_double_reg = function
         "Internal error: can't store double type in general-purpose register"
       [@coverage off]
 
-let show_operand t = function
-  | Reg r -> (
-      match t with
-      | Longword -> show_long_reg r
-      | Quadword -> show_quadword_reg r
-      | Double -> show_double_reg r
-      | ByteArray _ ->
-          failwith "Internal error: can't store non-scalar operand in register"
-          [@coverage off])
-  | Imm i -> Printf.sprintf "$%s" (Int64.to_string i)
-  | Memory (r, 0) -> Printf.sprintf "(%s)" (show_quadword_reg r)
-  | Memory (r, i) -> Printf.sprintf "%d(%s)" i (show_quadword_reg r)
-  | Data name ->
-      let lbl =
-        if Assembly_symbols.is_constant name then show_local_label name
-        else show_label name
-      in
-      Printf.sprintf "%s(%%rip)" lbl
-  | Indexed { base; index; scale } ->
-      Printf.sprintf "(%s, %s, %d)" (show_quadword_reg base)
-        (show_quadword_reg index) scale
-  (* printing out pseudoregisters is only for debugging *)
-  | Pseudo name -> Printf.sprintf "%%%s" name [@coverage off]
-  | PseudoMem (name, offset) ->
-      Printf.sprintf "%d(%%%s)" offset name [@coverage off]
-
 let show_byte_reg = function
   | AX -> "%al"
   | CX -> "%cl"
@@ -112,6 +88,34 @@ let show_byte_reg = function
   | _ ->
       failwith "Internal error: can't store byte type in XMM register"
       [@coverage off]
+
+let show_operand t = function
+  | Reg r -> (
+      match t with
+      | Byte -> show_byte_reg r
+      | Longword -> show_long_reg r
+      | Quadword -> show_quadword_reg r
+      | Double -> show_double_reg r
+      | ByteArray _ ->
+          failwith "Internal error: can't store non-scalar operand in register"
+          [@coverage off])
+  | Imm i -> Printf.sprintf "$%s" (Int64.to_string i)
+  | Memory (r, 0) -> Printf.sprintf "(%s)" (show_quadword_reg r)
+  | Memory (r, i) -> Printf.sprintf "%d(%s)" i (show_quadword_reg r)
+  | Data name ->
+      let lbl =
+        if Assembly_symbols.is_constant name then show_local_label name
+        else show_label name
+      in
+
+      Printf.sprintf "%s(%%rip)" lbl
+  | Indexed { base; index; scale } ->
+      Printf.sprintf "(%s, %s, %d)" (show_quadword_reg base)
+        (show_quadword_reg index) scale
+  (* printing out pseudoregisters is only for debugging *)
+  | Pseudo name -> Printf.sprintf "%%%s" name [@coverage off]
+  | PseudoMem (name, offset) ->
+      Printf.sprintf "%d(%%%s)" offset name [@coverage off]
 
 let show_byte_operand = function
   | Reg r -> show_byte_reg r
@@ -189,10 +193,16 @@ let emit_instruction chan = function
   | Label lbl -> Printf.fprintf chan "%s:\n" (show_local_label lbl)
   | Push op -> Printf.fprintf chan "\tpushq %s\n" (show_operand Quadword op)
   | Call f -> Printf.fprintf chan "\tcall %s\n" (show_fun_name f)
-  | Movsx (src, dst) ->
-      Printf.fprintf chan "\tmovslq %s, %s\n"
-        (show_operand Longword src)
-        (show_operand Quadword dst)
+  | Movsx { src_type; dst_type; src; dst } ->
+      Printf.fprintf chan "\tmovs%s%s %s, %s\n" (suffix src_type)
+        (suffix dst_type)
+        (show_operand src_type src)
+        (show_operand dst_type dst)
+  | MovZeroExtend { src_type; dst_type; src; dst } ->
+      Printf.fprintf chan "\tmovz%s%s %s, %s\n" (suffix src_type)
+        (suffix dst_type)
+        (show_operand src_type src)
+        (show_operand dst_type dst)
   | Cvtsi2sd (t, src, dst) ->
       Printf.fprintf chan "\tcvtsi2sd%s %s, %s\n" (suffix t)
         (show_operand t src) (show_operand Double dst)
@@ -205,16 +215,22 @@ let emit_instruction chan = function
     popq %%rbp
     ret
 |}
-  | Cdq (Double | ByteArray _) ->
-      failwith "Internal error: can't apply cdq to non-integer type"
+  | Cdq (Double | Byte | ByteArray _) ->
+      failwith "Internal error: can't apply cdq to a byte or non-integer type"
       [@coverage off]
-  | MovZeroExtend _ ->
-      failwith
-        "Internal error: MovZeroExtend should have been removed in instruction \
-         rewrite pass" [@coverage off]
 
 let emit_global_directive chan global label =
   if global then Printf.fprintf chan "\t.globl %s\n" label else ()
+
+let escape s =
+  let escape_char c =
+    if StringUtil.is_alnum c then String.make 1 c
+      (* use octal escape for everything except alphanumeric values
+       * make sure to pad out octal escapes to 3 digits so we don't, e.g.
+       * escape "hello 1" as "hello\401" *)
+    else Printf.sprintf {|\%03o|} (Char.code c)
+  in
+  String.concat "" (List.of_seq (Seq.map escape_char (String.to_seq s)))
 
 let emit_init chan = function
   | Initializers.IntInit i ->
@@ -222,16 +238,22 @@ let emit_init chan = function
   | LongInit l -> Printf.fprintf chan "\t.quad %Ld\n" l
   | UIntInit u -> Printf.fprintf chan "\t.long %s\n" (UInt32.to_string u)
   | ULongInit l -> Printf.fprintf chan "\t.quad %s\n" (UInt64.to_string l)
+  | CharInit c -> Printf.fprintf chan "\t.byte %s\n" (Int8.to_string c)
+  | UCharInit uc -> Printf.fprintf chan "\t.byte %s\n" (UInt8.to_string uc)
   | DoubleInit d -> Printf.fprintf chan "\t.quad %Ld\n" (Int64.bits_of_float d)
   (* a partly-initialized array can include a mix of zero and non-zero
      initializaers *)
   | ZeroInit byte_count -> Printf.fprintf chan "\t.zero %d\n" byte_count
+  | StringInit (s, true) -> Printf.fprintf chan "\t.asciz \"%s\"\n" (escape s)
+  | StringInit (s, false) -> Printf.fprintf chan "\t.ascii \"%s\"\n" (escape s)
+  | PointerInit lbl -> Printf.fprintf chan "\t.quad %s\n" (show_local_label lbl)
 
 let emit_constant chan name alignment init =
   let constant_section_name =
-    match !Settings.platform with
-    | Linux -> ".section .rodata"
-    | OS_X ->
+    match (!Settings.platform, init) with
+    | Linux, _ -> ".section .rodata"
+    | OS_X, Initializers.StringInit _ -> ".cstring"
+    | OS_X, _ ->
         if alignment = 8 then ".literal8"
         else if alignment = 16 then ".literal16"
         else

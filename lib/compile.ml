@@ -6,7 +6,7 @@ let compile stage src_file =
   if stage = Settings.Lex then ()
   else
     let ast = Parse.parse tokens in
-    if stage = Settings.Parse then ()
+    if stage = Settings.Parse then Format.printf "%a" Ast.Untyped.pp ast
     else
       (* Semantic analysis has three steps:
        * 1. resolve identifiers *)

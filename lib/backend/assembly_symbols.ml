@@ -29,6 +29,7 @@ let get_bytes_required fun_name =
 
 let get_size var_name =
   match Hashtbl.find symbol_table var_name with
+  | Obj { t = Byte; _ } -> 1
   | Obj { t = Longword; _ } -> 4
   | Obj { t = Quadword | Double; _ } -> 8
   | Obj { t = ByteArray { size; _ }; _ } -> size
@@ -38,6 +39,7 @@ let get_size var_name =
 
 let get_alignment var_name =
   match Hashtbl.find symbol_table var_name with
+  | Obj { t = Byte; _ } -> 1
   | Obj { t = Longword; _ } -> 4
   | Obj { t = Quadword | Double; _ } -> 8
   | Obj { t = ByteArray { alignment; _ }; _ } -> alignment

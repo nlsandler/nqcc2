@@ -7,6 +7,8 @@ module Ast = Ast.Typed
     zero- or sign-extended to preserve value; if it's the same size we preserve
     its representation. *)
 let const_to_int64 = function
+  | C.ConstChar c -> Int8.to_int64 c
+  | C.ConstUChar uc -> UInt8.to_int64 uc
   | C.ConstInt i -> Int64.of_int32 i
   | C.ConstUInt ui -> UInt32.to_int64 ui
   | C.ConstLong l -> l
@@ -16,6 +18,8 @@ let const_to_int64 = function
 (** Convert int64 to a constant. Preserve the value if possible and wrap modulo
     the size of the target type otherwise. *)
 let const_of_int64 v = function
+  | T.Char | T.SChar -> C.ConstChar (Int8.of_int64 v)
+  | T.UChar -> C.ConstUChar (UInt8.of_int64 v)
   | T.Int -> C.ConstInt (Int64.to_int32 v)
   | T.Long -> C.ConstLong v
   | T.UInt -> C.ConstUInt (UInt32.of_int64 v)

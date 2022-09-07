@@ -29,6 +29,7 @@ module UntypedExp = struct
   type exp =
     | Constant of Const.t
     | Var of string
+    | String of string
     | Cast of { target_type : Types.t; e : exp }
     | Unary of unary_operator * exp
     | Binary of binary_operator * exp * exp
@@ -51,6 +52,7 @@ module TypedExp = struct
   type inner_exp =
     | Constant of Const.t
     | Var of string
+    | String of string
     | Cast of { target_type : Types.t; e : exp }
     | Unary of unary_operator * exp
     | Binary of binary_operator * exp * exp

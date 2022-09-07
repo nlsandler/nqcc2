@@ -17,4 +17,6 @@ end
 module StringUtil : sig
   val drop : int -> string -> string
   val chop_suffix : ?n:int -> string -> string
+  val of_list : char list -> string
+  val is_alnum : char -> bool
 end

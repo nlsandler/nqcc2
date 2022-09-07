@@ -1,4 +1,5 @@
 open Unsigned
+open Utils
 
 module T = struct
   include Tokens
@@ -38,6 +39,54 @@ module Private = struct
     if actual <> expected then raise_error ~expected:(Tok expected) ~actual
     else ()
 
+  (* Unescape a string - see Table 16-1 *)
+  let unescape s =
+    (* Map from escape sequences to corresponding unescaped characters;
+     * use Ocaml quoted string literals to represent escape sequences so we
+     * don't need to escape the backslashes *)
+    let escapes =
+      [
+        (* Single quote *)
+        ({|\'|}, Char.chr 39);
+        (* Double quote *)
+        ({|\"|}, Char.chr 34);
+        (* Question mark *)
+        ({|\?|}, Char.chr 63);
+        (* Backslash *)
+        ({|\\|}, Char.chr 92);
+        (* Audible alert *)
+        ({|\a|}, Char.chr 7);
+        (* Backspace *)
+        ({|\b|}, Char.chr 8);
+        (* Form feed *)
+        ({|\f|}, Char.chr 12);
+        (* New line *)
+        ({|\n|}, Char.chr 10);
+        (* Carriage return*)
+        ({|\r|}, Char.chr 13);
+        (* Horizontal tab*)
+        ({|\t|}, Char.chr 9);
+        (* Vertical tab *)
+        ({|\v|}, Char.chr 11);
+      ]
+    in
+    let rec unescape_next remaining =
+      if remaining = "" then []
+      else
+        let find_matching_escape (escape_seq, _) =
+          String.starts_with ~prefix:escape_seq remaining
+        in
+        match List.find_opt find_matching_escape escapes with
+        (* It's an escape sequence - add unescaped character to list *)
+        | Some (escape_seq, unescaped) ->
+            unescaped
+            :: unescape_next
+                 (StringUtil.drop (String.length escape_seq) remaining)
+        | None -> remaining.[0] :: unescape_next (StringUtil.drop 1 remaining)
+    in
+    let unescaped_list = unescape_next s in
+    StringUtil.of_list unescaped_list
+
   (*** Parsing functions for grammar symbols ***)
 
   (* <identifier> ::= ? An identifier token ? *)
@@ -50,10 +99,12 @@ module Private = struct
 
   (* Helper function to check whether a token is a type specifier *)
   let is_type_specifier = function
-    | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned | KWDouble -> true
+    | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned | T.KWDouble | T.KWChar ->
+        true
     | _ -> false
 
-  (* <type-specifier> ::= "int" | "long" | "unsigned" | "signed" *)
+  (* <type-specifier> ::= "int" | "long" | "unsigned" | "signed" | "double"
+   *                    | "char" *)
   let parse_type_specifier tokens =
     let spec = Tok_stream.take_token tokens in
     if is_type_specifier spec then spec
@@ -97,21 +148,31 @@ module Private = struct
 
   (* Convert list of specifiers to a type (Listing 13-10). *)
   let parse_type specifier_list =
-    if specifier_list = [ T.KWDouble ] then Types.Double
-    else if
-      specifier_list = []
-      || List.sort_uniq compare specifier_list
-         <> List.sort compare specifier_list
-      || List.mem T.KWDouble specifier_list
-      || List.mem T.KWSigned specifier_list
-         && List.mem T.KWUnsigned specifier_list
-    then raise (ParseError "Invalid type specifier")
-    else if
-      List.mem T.KWUnsigned specifier_list && List.mem T.KWLong specifier_list
-    then Types.ULong
-    else if List.mem T.KWUnsigned specifier_list then Types.UInt
-    else if List.mem T.KWLong specifier_list then Types.Long
-    else Types.Int
+    (* sort specifiers so we don't need to check for different * orderings of
+       same specifiers *)
+    let specifier_list = List.sort Tokens.compare specifier_list in
+    match specifier_list with
+    | [ T.KWDouble ] -> Types.Double
+    | [ T.KWChar ] -> Types.Char
+    | [ T.KWChar; T.KWSigned ] -> Types.SChar
+    | [ T.KWChar; T.KWUnsigned ] -> Types.UChar
+    | _ ->
+        if
+          specifier_list = []
+          || List.sort_uniq compare specifier_list
+             <> List.sort compare specifier_list
+          || List.mem T.KWDouble specifier_list
+          || List.mem T.KWChar specifier_list
+          || List.mem T.KWSigned specifier_list
+             && List.mem T.KWUnsigned specifier_list
+        then raise (ParseError "Invalid type specifier")
+        else if
+          List.mem T.KWUnsigned specifier_list
+          && List.mem T.KWLong specifier_list
+        then Types.ULong
+        else if List.mem T.KWUnsigned specifier_list then Types.UInt
+        else if List.mem T.KWLong specifier_list then Types.Long
+        else Types.Int
 
   (* Convert list of specifiers to type and storage class (Listing 11-5) *)
   let parse_type_and_storage_class specifier_list =
@@ -127,10 +188,9 @@ module Private = struct
     in
     (typ, storage_class)
 
-  (*** Constants ***)
+  (*** Constants/Literals ***)
 
   (* Convert a signed constant token to a constant AST node (Listing 11-6). *)
-
   let parse_signed_constant token =
     let v, is_int =
       match token with
@@ -167,7 +227,15 @@ module Private = struct
       Const.ConstUInt (UInt32.of_int32 (Z.to_int32_unsigned v))
     else Const.ConstULong (UInt64.of_int64 (Z.to_int64_unsigned v))
 
-  (* <const> ::= <int> | <long> | <uint> | <ulong>
+  (* Convert a char token to a Const.t *)
+  let parse_char token =
+    let unescaped = unescape token in
+    if String.length unescaped = 1 then
+      let ch_code = Char.code unescaped.[0] in
+      Const.ConstInt (Int32.of_int ch_code)
+    else raise (ParseError "multi-character constant tokens not supported")
+
+  (* <const> ::= <int> | <long> | <uint> | <ulong> | <double> | <char>
 
      Just remove the next token from the stream and pass it off to the
      appropriate helper function to convert it to a Const.t *)
@@ -177,6 +245,7 @@ module Private = struct
     | T.ConstInt _ | T.ConstLong _ -> parse_signed_constant const_tok
     | T.ConstUInt _ | T.ConstULong _ -> parse_unsigned_constant const_tok
     | T.ConstDouble d -> Const.ConstDouble d
+    | T.ConstChar c -> parse_char c
     | other -> raise_error ~expected:(Name "a constant token") ~actual:other
 
   (* Parse an array declarator dimension of the form "[" <const> "]" to an
@@ -187,13 +256,21 @@ module Private = struct
       match parse_const tokens with
       | Const.ConstDouble _ ->
           raise (ParseError "Floating-point array dimensions not allowed")
-      | ConstInt i -> Int32.to_int i
-      | ConstLong l -> Int64.to_int l
-      | ConstUInt u -> UInt32.to_int u
-      | ConstULong ul -> UInt64.to_int ul
+      | Const.ConstChar c -> Int8.to_int c
+      | Const.ConstInt i -> Int32.to_int i
+      | Const.ConstLong l -> Int64.to_int l
+      | Const.ConstUChar uc -> UInt8.to_int uc
+      | Const.ConstUInt u -> UInt32.to_int u
+      | Const.ConstULong ul -> UInt64.to_int ul
     in
     expect T.CloseBracket tokens;
     dim
+
+  (* <string> ::= ? a string token ? *)
+  let parse_string tokens =
+    match Tok_stream.take_token tokens with
+    | T.StringLiteral s -> unescape s
+    | other -> raise_error ~expected:(Name "a string literal") ~actual:other
 
   (*** Abstract declarators ***)
 
@@ -306,7 +383,7 @@ module Private = struct
     | T.GreaterOrEqual -> Ast.GreaterOrEqual
     | other -> raise_error ~expected:(Name "a binary operator") ~actual:other
 
-  (* <primary-exp> ::= <const> | <identifier> | "(" <exp> ")"
+  (* <primary-exp> ::= <const> | <identifier> | "(" <exp> ")" | { <string> }+
    *                 | <identifier> "(" [ <argument-list> ] ")"
    *)
   let rec parse_primary_exp tokens =
@@ -314,7 +391,7 @@ module Private = struct
     match next_token with
     (* constant *)
     | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _
-    | T.ConstDouble _ ->
+    | T.ConstDouble _ | T.ConstChar _ ->
         Ast.Constant (parse_const tokens)
     (* variable or function call *)
     | T.Identifier _ ->
@@ -336,6 +413,19 @@ module Private = struct
         let e = parse_exp 0 tokens in
         expect T.CloseParen tokens;
         e
+    (* string literal *)
+    | T.StringLiteral _ ->
+        (* Consume and concatenate strings literals *)
+        let rec parse_string_loop () =
+          let s = parse_string tokens in
+          match Tok_stream.peek tokens with
+          (* Recursively process remaining string literals, then concatenate s
+             with them *)
+          | T.StringLiteral _ -> s ^ parse_string_loop ()
+          (* s is last string literal, return as-is *)
+          | _ -> s
+        in
+        Ast.String (parse_string_loop ())
     (* errors *)
     | t -> raise_error ~expected:(Name "a primary expression") ~actual:t
 
