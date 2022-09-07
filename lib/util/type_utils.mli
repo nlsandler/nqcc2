@@ -7,3 +7,4 @@ val is_pointer : Types.t -> bool
 val is_integer : Types.t -> bool
 val is_arithmetic : Types.t -> bool
 val is_array : Types.t -> bool
+val is_character : Types.t -> bool

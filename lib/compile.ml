@@ -6,7 +6,7 @@ let compile target stage src_file =
   let source_lines = File.lines_of src_file in
   (* concatenate all the lines *)
   let source =
-    Enum.reduce (fun line1 line2 -> line1 ^ " " ^ line2) source_lines
+    Enum.reduce (fun line1 line2 -> line1 ^ "\n" ^ line2) source_lines
   in
   (* Lex it *)
   let tokens = Lex.lex source in

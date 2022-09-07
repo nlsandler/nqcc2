@@ -12,6 +12,13 @@ let double_regexp =
   Str.regexp
     {|\(\([0-9]*\.[0-9]+\|[0-9]+\.?\)[Ee][+-]?[0-9]+\|[0-9]*\.[0-9]+\|[0-9]+\.\)[^A-Za-z0-9_.]|}
 
+(* because we're using quoted string literals, we need a literal newline in these regexes instead of \n *)
+let char_regexp = Str.regexp {|'\([^'\\
+]\|\\['"?\\abfnrtv]\)'|}
+
+let string_regexp = Str.regexp {|"\([^"\\
+]\|\\['"\\?abfnrtv]\)*"|}
+
 let id_to_tok = function
   | "int" -> KWInt
   | "return" -> KWReturn
@@ -29,6 +36,7 @@ let id_to_tok = function
   | "unsigned" -> KWUnsigned
   | "signed" -> KWSigned
   | "double" -> KWDouble
+  | "char" -> KWChar
   | other -> Identifier other
 
 let rec lex_helper chars =
@@ -62,9 +70,33 @@ let rec lex_helper chars =
   | '&' :: rest -> Ampersand :: lex_helper rest
   | '[' :: rest -> OpenBracket :: lex_helper rest
   | ']' :: rest -> CloseBracket :: lex_helper rest
+  | '\'' :: _ -> lex_character chars
+  | '"' :: _ -> lex_string chars
   | c :: rest when Char.is_whitespace c -> lex_helper rest
   | c :: _ when Char.is_digit c || c = '.' -> lex_constant chars
   | _ -> lex_identifier chars
+
+and lex_character input_chars =
+  let input = String.implode input_chars in
+  if Str.string_match char_regexp input 0 then
+    (* remove open and close quotes from matched input *)
+    let ch = Str.matched_string input |> String.rchop |> String.lchop in
+    let tok = ConstChar ch in
+    let remaining = Str.string_after input (Str.match_end ()) in
+    tok :: lex_helper (String.explode remaining)
+  else
+    failwith ("Input starts with ' but isn't a valid character token: " ^ input)
+
+and lex_string input_chars =
+  let input = String.implode input_chars in
+  if Str.string_match string_regexp input 0 then
+    (* remove open and close quotes from matched input *)
+    let str = Str.matched_string input |> String.rchop |> String.lchop in
+    let tok = StringLiteral str in
+    let remaining = Str.string_after input (Str.match_end ()) in
+    tok :: lex_helper (String.explode remaining)
+  else
+    failwith ("Input starts with \" but isn't a valid string literal: " ^ input)
 
 and lex_constant input_chars =
   let input = String.implode input_chars in

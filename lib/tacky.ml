@@ -68,6 +68,11 @@ type top_level =
       global : bool;
       init : Initializers.static_init list;
     }
+  | StaticConstant of {
+      name : string;
+      t : Types.t;
+      init : Initializers.static_init;
+    }
 [@@deriving show]
 
 type t = Program of top_level list [@@deriving show]
