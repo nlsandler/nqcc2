@@ -48,7 +48,7 @@ let rec resolve_exp id_map = function
       Subscript
         { ptr = resolve_exp id_map ptr; index = resolve_exp id_map index }
   (* Nothing to do for constant *)
-  | Constant _ as c -> c
+  | (Constant _ | String _) as c -> c
 
 let resolve_optional_exp id_map = Option.map (resolve_exp id_map)
 

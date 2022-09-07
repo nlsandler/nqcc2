@@ -39,6 +39,8 @@ let const_to_string = function
   | ConstUInt ui -> Cnums.UInt32.to_string ui ^ "u"
   | ConstULong ul -> Cnums.UInt64.to_string ul ^ "ul"
   | ConstDouble d -> Float.to_string d
+  | ConstChar c -> Cnums.Int8.to_string c
+  | ConstUChar uc -> Cnums.UInt8.to_string uc
 
 let pp_tacky_val out = function
   | Constant i -> Format.pp_print_string out (const_to_string i)
@@ -115,6 +117,11 @@ let pp_tl out = function
       Format.pp_open_vbox out 0;
       if global then Format.pp_print_string out "global ";
       Format.fprintf out "%a %s = %a" Types.pp t name pp_init_list init;
+      Format.pp_close_box out ()
+  | StaticConstant { name; init; t } ->
+      Format.pp_open_box out 0;
+      Format.fprintf out "const %a %s = %a" Types.pp t name
+        Initializers.pp_static_init init;
       Format.pp_close_box out ()
 
 let pp_program out (Program tls) =

@@ -1,6 +1,9 @@
 [@@@coverage exclude_file]
 
 type t =
+  | Char
+  | SChar
+  | UChar
   | Int
   | Long
   | UInt

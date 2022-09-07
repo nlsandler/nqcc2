@@ -6,5 +6,7 @@ module Float : sig
 end
 
 (* define new modules *)
+module Int8 : Num_interfaces.NumLike
+module UInt8 : Num_interfaces.NumLike
 module UInt32 : Num_interfaces.NumLike
 module UInt64 : Num_interfaces.NumLike
