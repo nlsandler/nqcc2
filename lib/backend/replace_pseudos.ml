@@ -57,15 +57,17 @@ let replace_pseudos_in_instruction state = function
       let state2, new_dst = replace_operand state1 dst in
       let new_mov = Mov (t, new_src, new_dst) in
       (state2, new_mov)
-  | Movsx (src, dst) ->
-      let state1, new_src = replace_operand state src in
-      let state2, new_dst = replace_operand state1 dst in
-      let new_movsx = Movsx (new_src, new_dst) in
+  | Movsx fields ->
+      let state1, new_src = replace_operand state fields.src in
+      let state2, new_dst = replace_operand state1 fields.dst in
+      let new_movsx = Movsx { fields with src = new_src; dst = new_dst } in
       (state2, new_movsx)
-  | MovZeroExtend (src, dst) ->
-      let state1, new_src = replace_operand state src in
-      let state2, new_dst = replace_operand state1 dst in
-      let new_movzx = MovZeroExtend (new_src, new_dst) in
+  | MovZeroExtend fields ->
+      let state1, new_src = replace_operand state fields.src in
+      let state2, new_dst = replace_operand state1 fields.dst in
+      let new_movzx =
+        MovZeroExtend { fields with src = new_src; dst = new_dst }
+      in
       (state2, new_movzx)
   | Lea (src, dst) ->
       let state1, new_src = replace_operand state src in

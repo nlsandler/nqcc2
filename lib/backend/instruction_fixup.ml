@@ -1,4 +1,5 @@
 open Assembly
+open Cnums
 
 let int32_max = Int64.of_int32 Int32.max_int
 let int32_min = Int64.of_int32 Int32.min_int
@@ -10,6 +11,7 @@ let is_larger_than_uint imm =
   (* use signed 32-bit lower bound for negatives *)
   imm > max_i || imm < int32_min
 
+let is_larger_than_byte imm = imm >= 256L || imm < -128L
 let is_constant = function Imm _ -> true | _ -> false
 
 let is_memory = function
@@ -38,22 +40,60 @@ let fixup_instruction = function
       let bitmask = Int64.of_string "0xffffffff" in
       let reduced = Int64.logand i bitmask in
       [ Mov (Longword, Imm reduced, dst) ]
+  (* Moving a longword-size constant with a byte operand size produces assembler warning *)
+  | Mov (Byte, Imm i, dst) when is_larger_than_byte i ->
+      let reduced = Int8.to_int64 (Int8.of_int64 i) in
+      [ Mov (Byte, Imm reduced, dst) ]
   (* Movsx can't handle immediate source or memory dst *)
-  | Movsx ((Imm _ as src), ((Memory _ | Data _) as dst)) ->
+  | Movsx
+      {
+        src_type;
+        dst_type;
+        src = Imm _ as src;
+        dst = (Memory _ | Data _) as dst;
+      } ->
       [
-        Mov (Longword, src, Reg R10);
-        Movsx (Reg R10, Reg R11);
-        Mov (Quadword, Reg R11, dst);
+        Mov (src_type, src, Reg R10);
+        Movsx { src_type; dst_type; src = Reg R10; dst = Reg R11 };
+        Mov (dst_type, Reg R11, dst);
       ]
-  | Movsx ((Imm _ as src), dst) ->
-      [ Mov (Longword, src, Reg R10); Movsx (Reg R10, dst) ]
-  | Movsx (src, ((Memory _ | Data _) as dst)) ->
-      [ Movsx (src, Reg R11); Mov (Quadword, Reg R11, dst) ]
-  (* rewrite MovZerOExtend as one or two Mov instructions *)
-  | MovZeroExtend (src, dst) -> (
-      match dst with
-      | Reg _ -> [ Mov (Longword, src, dst) ]
-      | _ -> [ Mov (Longword, src, Reg R11); Mov (Quadword, Reg R11, dst) ])
+  | Movsx { src_type; dst_type; src = Imm _ as src; dst } ->
+      [
+        Mov (src_type, src, Reg R10);
+        Movsx { src_type; dst_type; src = Reg R10; dst };
+      ]
+  | Movsx { src_type; dst_type; src; dst = (Memory _ | Data _) as dst } ->
+      [
+        Movsx { src_type; dst_type; src; dst = Reg R11 };
+        Mov (dst_type, Reg R11, dst);
+      ]
+  | MovZeroExtend { src_type = Byte; src = Imm i; dst_type; dst } ->
+      (* MovZeroExtend src can't be an immediate *)
+      if is_memory dst then
+        [
+          Mov (Byte, Imm i, Reg R10);
+          MovZeroExtend
+            { src_type = Byte; src = Reg R10; dst_type; dst = Reg R11 };
+          Mov (dst_type, Reg R11, dst);
+        ]
+      else
+        [
+          Mov (Byte, Imm i, Reg R10);
+          MovZeroExtend { src_type = Byte; src = Reg R10; dst_type; dst };
+        ]
+  | MovZeroExtend { src_type = Byte; dst_type; src; dst } when is_memory dst ->
+      (* MovZeroExtend destination must be a register *)
+      [
+        MovZeroExtend { src_type = Byte; dst_type; src; dst = Reg R11 };
+        Mov (dst_type, Reg R11, dst);
+      ]
+  | MovZeroExtend { src_type = Longword; dst_type; src; dst } when is_memory dst
+    ->
+      (* to zero-extend longword to quadword, first copy into register, then move to destination *)
+      [ Mov (Longword, src, Reg R11); Mov (dst_type, Reg R11, dst) ]
+  | MovZeroExtend { src_type = Longword; src; dst; _ } ->
+      (* if destination is already a register, zero-extend w/ a single mov instruction *)
+      [ Mov (Longword, src, dst) ]
   (* Idiv can't operate on constants *)
   | Idiv (t, Imm i) -> [ Mov (t, Imm i, Reg R10); Idiv (t, Reg R10) ]
   | Div (t, Imm i) -> [ Mov (t, Imm i, Reg R10); Div (t, Reg R10) ]

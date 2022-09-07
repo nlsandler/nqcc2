@@ -10,13 +10,17 @@ module T = struct
 end
 
 let is_lvalue T.{ e; _ } =
-  match e with T.Dereference _ | T.Subscript _ | T.Var _ -> true | _ -> false
+  match e with
+  | T.Dereference _ | T.Subscript _ | T.Var _ | T.String _ -> true
+  | _ -> false
 
 let convert_to e target_type =
   let cast = T.Cast { target_type; e } in
   set_type cast target_type
 
 let get_common_type t1 t2 =
+  let t1 = if is_character t1 then Types.Int else t1 in
+  let t2 = if is_character t2 then Types.Int else t2 in
   if t1 = t2 then t1
   else if t1 = Types.Double || t2 = Double then Double
   else if get_size t1 = get_size t2 then if is_signed t1 then t2 else t1
@@ -64,9 +68,15 @@ let opt_typecheck typecheck_fn = function
   | Some ast_node -> Some (typecheck_fn ast_node)
   | None -> None
 
+let typecheck_string s =
+  let e = T.String s in
+  let t = Types.Array { elem_type = Char; size = String.length s + 1 } in
+  set_type e t
+
 let rec typecheck_exp = function
   | U.Var v -> typecheck_var v
   | Constant c -> typecheck_const c
+  | String s -> typecheck_string s
   | Cast { target_type; e = inner } -> typecheck_cast target_type inner
   | Unary (Not, inner) -> typecheck_not inner
   | Unary (Complement, inner) -> typecheck_complement inner
@@ -112,6 +122,11 @@ and typecheck_complement inner =
   if typed_inner.t = Double || is_pointer typed_inner.t then
     failwith "Bitwise complement only valid for integer types"
   else
+    (* promote character types to int *)
+    let typed_inner =
+      if is_character typed_inner.t then convert_to typed_inner Int
+      else typed_inner
+    in
     let complement_exp = T.Unary (Complement, typed_inner) in
     set_type complement_exp typed_inner.t
 
@@ -120,6 +135,11 @@ and typecheck_negate inner =
   match typed_inner.t with
   | Pointer _ -> failwith "Can't negate a pointer"
   | _ ->
+      (* promote character types to int *)
+      let typed_inner =
+        if is_character typed_inner.t then convert_to typed_inner Int
+        else typed_inner
+      in
       let negate_exp = T.Unary (Negate, typed_inner) in
       set_type negate_exp typed_inner.t
 
@@ -305,16 +325,34 @@ and typecheck_and_convert e =
 
 let rec static_init_helper var_type init =
   match (var_type, init) with
+  | Types.Array { elem_type; size }, U.SingleInit (U.String s) ->
+      if is_character elem_type then
+        match size - String.length s with
+        | 0 -> [ Initializers.StringInit (s, false) ]
+        | 1 -> [ Initializers.StringInit (s, true) ]
+        | n when n > 0 ->
+            [ Initializers.StringInit (s, true); ZeroInit (n - 1) ]
+        | _ -> failwith "string is too long for initializer"
+      else
+        failwith
+          "Can't initailize array of non-character type with string literal"
   | Types.Array _, U.SingleInit _ ->
       failwith "Can't initialize array from scalar value"
+  | Types.Pointer Char, U.SingleInit (U.String s) ->
+      let str_id = Symbols.add_string s in
+      [ PointerInit str_id ]
+  | _, U.SingleInit (U.String _) ->
+      failwith "String literal can only initialize char *"
   | _, U.SingleInit (U.Constant c) when is_zero_int c ->
       Initializers.zero var_type
   | Types.Pointer _, _ -> failwith "invalid static initializer for pointer"
   | _, U.SingleInit (U.Constant c) ->
       let init_val =
         match Const_convert.const_convert var_type c with
+        | Const.ConstChar c -> Initializers.CharInit c
         | Const.ConstInt i -> Initializers.IntInit i
         | Const.ConstLong l -> Initializers.LongInit l
+        | Const.ConstUChar uc -> Initializers.UCharInit uc
         | Const.ConstUInt ui -> UIntInit ui
         | Const.ConstULong ul -> ULongInit ul
         | Const.ConstDouble d -> DoubleInit d
@@ -344,7 +382,9 @@ let rec make_zero_init t =
   match t with
   | Types.Array { elem_type; size } as t ->
       T.CompoundInit (t, Utils.make_list size (make_zero_init elem_type))
-  | Types.Int -> scalar (Const.ConstInt Int32.zero)
+  | Char | SChar -> scalar (Const.ConstChar Int8.zero)
+  | Int -> scalar (Const.ConstInt Int32.zero)
+  | UChar -> scalar (Const.ConstUChar UInt8.zero)
   | UInt -> scalar (Const.ConstUInt UInt32.zero)
   | Long -> scalar (Const.ConstLong Int64.zero)
   | ULong | Pointer _ -> scalar (Const.ConstULong UInt64.zero)
@@ -356,11 +396,17 @@ let rec make_zero_init t =
 
 let rec typecheck_init target_type init =
   match (target_type, init) with
+  | Types.Array { elem_type; size }, U.SingleInit (String s) ->
+      if not (is_character elem_type) then
+        failwith "Can't initialize non-character type with string literal"
+      else if String.length s > size then
+        failwith "Too many characters in string literal"
+      else T.SingleInit (set_type (T.String s) target_type)
   | _, U.SingleInit e ->
       let typechecked_e = typecheck_and_convert e in
       let cast_exp = convert_by_assignment typechecked_e target_type in
       T.SingleInit cast_exp
-  | Types.Array { elem_type; size }, CompoundInit inits ->
+  | Array { elem_type; size }, CompoundInit inits ->
       if List.length inits > size then
         failwith "too mahy values in initializer "
       else

@@ -3,6 +3,8 @@
 type t =
   (* tokens with contents *)
   | Identifier of string
+  | StringLiteral of string
+  | ConstChar of string
   | ConstInt of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   | ConstLong of (Z.t[@equal Z.equal] [@printer Z.pp_print])
   | ConstUInt of (Z.t[@equal Z.equal] [@printer Z.pp_print])
@@ -11,6 +13,7 @@ type t =
   (* Keywords *)
   | KWInt
   | KWLong
+  | KWChar
   | KWSigned
   | KWUnsigned
   | KWDouble
@@ -54,4 +57,4 @@ type t =
   | Ampersand
   | OpenBracket
   | CloseBracket
-[@@deriving show]
+[@@deriving show, ord]

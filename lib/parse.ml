@@ -49,10 +49,35 @@ let get_precedence = function
   | T.EqualSign -> Some 1
   | _ -> None
 
+(* unescape a string - have to deal with escape sequences individually
+ * b/c OCaml lexical convention doesn't recognize all of them *)
+let unescape s =
+  let rec f s' =
+    match String_utils.prefix s' 2 with
+    | [] -> []
+    | [ '\\'; '\'' ] -> '\'' :: f (String_utils.drop 2 s')
+    | [ '\\'; '"' ] -> '"' :: f (String_utils.drop 2 s')
+    | [ '\\'; '?' ] -> '?' :: f (String_utils.drop 2 s')
+    | [ '\\'; '\\' ] -> '\\' :: f (String_utils.drop 2 s')
+    | [ '\\'; 'a' ] -> Char.chr 7 :: f (String_utils.drop 2 s')
+    | [ '\\'; 'b' ] -> '\b' :: f (String_utils.drop 2 s')
+    | [ '\\'; 'f' ] -> Char.chr 12 :: f (String_utils.drop 2 s')
+    | [ '\\'; 'n' ] -> '\n' :: f (String_utils.drop 2 s')
+    | [ '\\'; 'r' ] -> '\r' :: f (String_utils.drop 2 s')
+    | [ '\\'; 't' ] -> '\t' :: f (String_utils.drop 2 s')
+    | [ '\\'; 'v' ] -> Char.chr 11 :: f (String_utils.drop 2 s')
+    | '\\' :: _ ->
+        failwith
+          "Internal error: not a valid escape sequence; should have been \
+           rejected during lexing" [@coverage off]
+    | x :: _ -> x :: f (String_utils.drop_first s')
+  in
+  String.of_seq (List.to_seq (f s))
+
 (* getting a list of specifiers *)
 
 let is_type_specifier = function
-  | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble -> true
+  | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble | KWChar -> true
   | _ -> false
 
 let is_specifier = function
@@ -77,20 +102,30 @@ let parse_storage_class = function
   | _ -> failwith "Internal error: bad storage class" [@coverage off]
 
 let parse_type specifier_list =
-  if specifier_list = [ T.KWDouble ] then Types.Double
-  else if
-    specifier_list = []
-    || List.sort_uniq compare specifier_list <> List.sort compare specifier_list
-    || List.mem T.KWDouble specifier_list
-    || List.mem T.KWSigned specifier_list
-       && List.mem T.KWUnsigned specifier_list
-  then failwith "Invalid type specifier"
-  else if
-    List.mem T.KWUnsigned specifier_list && List.mem T.KWLong specifier_list
-  then Types.ULong
-  else if List.mem T.KWUnsigned specifier_list then Types.UInt
-  else if List.mem T.KWLong specifier_list then Types.Long
-  else Types.Int
+  (* sort specifiers so we don't need to check for different
+   * orderings of same specifiers *)
+  let specifier_list = List.sort Tokens.compare specifier_list in
+  match specifier_list with
+  | [ T.KWDouble ] -> Types.Double
+  | [ T.KWChar ] -> Types.Char
+  | [ T.KWChar; T.KWSigned ] -> Types.SChar
+  | [ T.KWChar; T.KWUnsigned ] -> Types.UChar
+  | _ ->
+      if
+        specifier_list = []
+        || List.sort_uniq compare specifier_list
+           <> List.sort compare specifier_list
+        || List.mem T.KWDouble specifier_list
+        || List.mem T.KWChar specifier_list
+        || List.mem T.KWSigned specifier_list
+           && List.mem T.KWUnsigned specifier_list
+      then failwith "Invalid type specifier"
+      else if
+        List.mem T.KWUnsigned specifier_list && List.mem T.KWLong specifier_list
+      then Types.ULong
+      else if List.mem T.KWUnsigned specifier_list then Types.UInt
+      else if List.mem T.KWLong specifier_list then Types.Long
+      else Types.Int
 
 let parse_type_and_storage_class specifier_list =
   let types, storage_classes =
@@ -116,6 +151,7 @@ let parse_id tokens =
 (* parsing constants *)
 
 (* <int> ::= ? A constant token ?
+   <char> :: ? A char token ?
    <long> ::= ? an int or long token ?
    <uint> ::= ? An unsigned int token ?
    <ulong> ::= ? An unsigned int or unsigned long token ?
@@ -124,6 +160,14 @@ let parse_id tokens =
 let parse_constant tokens =
   try
     match Stream.next tokens with
+    | T.ConstChar s ->
+        let s' = unescape s in
+        if String.length s' = 1 then
+          Const.ConstInt (Int32.of_int (Char.code s'.[0]))
+        else
+          failwith
+            "Internal error: Character token contains multiple characters, \
+             lexer should have rejected this" [@coverage off]
     | T.ConstDouble d -> Const.ConstDouble d
     | T.ConstInt c -> (
         try Const.ConstInt (Z.to_int32 c)
@@ -238,6 +282,8 @@ let const_to_dim c =
     | ConstUInt u -> UInt32.to_int u
     | ConstULong ul -> UInt64.to_int ul
     | ConstDouble _ -> failwith "Array dimensions must have integer type"
+    | ConstChar _ | ConstUChar _ ->
+        failwith "Internal error, we're not using these yet" [@coverage off]
   in
   if i > 0 then i else failwith "Array dimension must be greater than zero"
 
@@ -362,13 +408,20 @@ let parse_binop tokens =
       raise (ParseError "Internal error when parsing binary operator")
       [@coverage off]
 
+let rec parse_string_literals tokens =
+  match peek tokens with
+  | T.StringLiteral s ->
+      Stream.junk tokens;
+      unescape s ^ parse_string_literals tokens
+  | _ -> ""
+
 (* <factor> ::= <int> | <identifier> <unop> <factor> | "(" <exp> ")" *)
 let rec parse_primary_expression tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
-  | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _ | T.ConstULong _
-  | T.ConstDouble _ ->
+  | T.ConstChar _ | T.ConstInt _ | T.ConstLong _ | T.ConstUInt _
+  | T.ConstULong _ | T.ConstDouble _ ->
       Ast.Constant (parse_constant tokens)
   (* identifier *)
   | T.Identifier _ -> (
@@ -379,6 +432,9 @@ let rec parse_primary_expression tokens =
           let args = parse_optional_arg_list tokens in
           FunCall { f = id; args }
       | _ -> Var id)
+  | T.StringLiteral _ ->
+      let string_exp = parse_string_literals tokens in
+      Ast.String string_exp
   | T.OpenParen ->
       Stream.junk tokens;
       let e = parse_expression 0 tokens in

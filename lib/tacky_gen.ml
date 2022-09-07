@@ -53,6 +53,9 @@ let rec emit_tacky_for_exp Ast.{ e; t } =
   (* don't need any instructions to calculate a constant or variable  *)
   | Ast.Constant c -> ([], PlainOperand (T.Constant c))
   | Ast.Var v -> ([], PlainOperand (T.Var v))
+  | Ast.String s ->
+      let str_id = Symbols.add_string s in
+      ([], PlainOperand (T.Var str_id))
   | Ast.Cast { target_type; e } -> emit_cast_expression target_type e
   | Ast.Unary (op, inner) -> emit_unary_expression t op inner
   | Ast.Binary (And, e1, e2) -> emit_and_expression e1 e2
@@ -281,7 +284,36 @@ and emit_tacky_and_convert e =
       let dst = T.Var (create_tmp e.t) in
       (instructions @ [ T.Load { src_ptr = ptr; dst } ], dst)
 
+let rec emit_string_init dst offset s =
+  let len = Bytes.length s in
+  if len = 0 then []
+  else if len >= 8 then
+    let l = Bytes.get_int64_le s 0 in
+    let instr =
+      Tacky.CopyToOffset { src = Constant (ConstLong l); dst; offset }
+    in
+    let rest = Bytes.sub s 8 (len - 8) in
+    instr :: emit_string_init dst (offset + 8) rest
+  else if len >= 4 then
+    let i = Bytes.get_int32_le s 0 in
+    let instr =
+      Tacky.CopyToOffset { src = Constant (ConstInt i); dst; offset }
+    in
+    let rest = Bytes.sub s 4 (len - 4) in
+    instr :: emit_string_init dst (offset + 4) rest
+  else
+    let c = Cnums.Int8.of_int (Bytes.get_int8 s 0) in
+    let instr =
+      Tacky.CopyToOffset { src = Constant (ConstChar c); dst; offset }
+    in
+    let rest = Bytes.sub s 1 (len - 1) in
+    instr :: emit_string_init dst (offset + 1) rest
+
 let rec emit_compound_init name offset = function
+  | Ast.SingleInit { e = String s; t = Array { size; _ } } ->
+      let str_bytes = Bytes.of_string s in
+      let padding_bytes = Bytes.make (size - String.length s) (Char.chr 0) in
+      emit_string_init name offset (Bytes.cat str_bytes padding_bytes)
   | Ast.SingleInit e ->
       let eval_init, v = emit_tacky_and_convert e in
       eval_init @ [ CopyToOffset { src = v; dst = name; offset } ]
@@ -327,6 +359,13 @@ and emit_local_declaration = function
   | Ast.FunDecl _ -> []
 
 and emit_var_declaration = function
+  | {
+      name;
+      init =
+        Some (Ast.SingleInit { e = Ast.String _; t = Array _ } as string_init);
+      _;
+    } ->
+      emit_compound_init name 0 string_init
   | { name; init = Some (Ast.SingleInit e); var_type; _ } ->
       (* treat declaration with initializer like an assignment expression *)
       let eval_assignment, _assign_result =
@@ -428,6 +467,8 @@ let convert_symbols_to_tacky all_symbols =
               (T.StaticVariable
                  { name; t = entry.t; global; init = Initializers.zero entry.t })
         | NoInitializer -> None)
+    | Symbols.ConstAttr init ->
+        Some (T.StaticConstant { name; t = entry.t; init })
     | _ -> None
   in
   List.filter_map to_var all_symbols

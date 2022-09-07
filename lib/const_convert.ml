@@ -23,7 +23,9 @@ end
 (* Cast any integer to another type *)
 module IntCastEvaluator (C : Castable) = struct
   let cast v = function
-    | T.Int -> Const.ConstInt (C.to_int32 v)
+    | T.Char | SChar -> Const.ConstChar (v |> C.to_int32 |> Int8.of_int32)
+    | UChar -> ConstUChar (v |> C.to_int32 |> UInt8.of_int32)
+    | Int -> Const.ConstInt (C.to_int32 v)
     | UInt -> ConstUInt (v |> C.to_int64 |> UInt32.of_int64)
     | Long -> ConstLong (C.to_int64 v)
     | ULong | Pointer _ -> ConstULong (v |> C.to_int64 |> UInt64.of_int64)
@@ -34,6 +36,8 @@ module IntCastEvaluator (C : Castable) = struct
         [@coverage off]
 end
 
+module CharCaster = IntCastEvaluator (Int8)
+module UCharCaster = IntCastEvaluator (UInt8)
 module UIntCaster = IntCastEvaluator (UInt32)
 module ULongCaster = IntCastEvaluator (UInt64)
 
@@ -51,7 +55,9 @@ module LongCaster = IntCastEvaluator (struct
 end)
 
 let const_convert target_type = function
-  | Const.ConstInt i -> IntCaster.cast i target_type
+  | Const.ConstChar c -> CharCaster.cast c target_type
+  | ConstUChar uc -> UCharCaster.cast uc target_type
+  | ConstInt i -> IntCaster.cast i target_type
   | ConstUInt ui -> UIntCaster.cast ui target_type
   | ConstLong l -> LongCaster.cast l target_type
   | ConstULong ul -> ULongCaster.cast ul target_type
