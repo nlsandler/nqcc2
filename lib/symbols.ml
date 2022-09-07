@@ -8,6 +8,7 @@ type initial_value =
 type identifier_attrs =
   | FunAttr of { defined : bool; global : bool }
   | StaticAttr of { init : initial_value; global : bool }
+  | ConstAttr of Initializers.static_init
   | LocalAttr
 
 type entry = { t : Types.t; attrs : identifier_attrs }
@@ -29,9 +30,16 @@ let add_fun name ~t ~global ~defined =
 let get name = Hashtbl.find symbol_table name
 let get_opt name = Hashtbl.find_option symbol_table name
 
+let add_string s =
+  let str_id = Unique_ids.make_named_temporary "string" in
+  let t = Types.Array { elem_type = Char; size = String.length s + 1 } in
+  Hashtbl.replace symbol_table str_id
+    { t; attrs = ConstAttr (StringInit (s, true)) };
+  str_id
+
 let is_global name =
   match (get name).attrs with
-  | LocalAttr -> false
+  | LocalAttr | ConstAttr _ -> false
   | StaticAttr { global; _ } -> global
   | FunAttr { global; _ } -> global
 

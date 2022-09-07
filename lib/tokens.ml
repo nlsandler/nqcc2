@@ -7,6 +7,8 @@ end
 type t =
   (* tokens with contents *)
   | Identifier of string
+  | StringLiteral of string
+  | ConstChar of string
   | ConstInt of Big_int.big_int
   | ConstLong of Big_int.big_int
   | ConstUInt of Big_int.big_int
@@ -15,6 +17,7 @@ type t =
   (* Keywords *)
   | KWInt
   | KWLong
+  | KWChar
   | KWSigned
   | KWUnsigned
   | KWDouble
@@ -77,4 +80,4 @@ type t =
   | Comma
   | OpenBracket
   | CloseBracket
-[@@deriving show]
+[@@deriving show, ord]
