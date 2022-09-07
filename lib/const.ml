@@ -3,6 +3,8 @@ open Cnums
 [@@@coverage off]
 
 type t =
+  | ConstChar of Int8.t
+  | ConstUChar of UInt8.t
   | ConstInt of Int32.t
   | ConstLong of Int64.t
   | ConstUInt of UInt32.t
@@ -11,6 +13,8 @@ type t =
 
 (* print functions for debugging *)
 let show = function
+  | ConstChar c -> Int8.to_string c
+  | ConstUChar c -> UInt8.to_string c
   | ConstInt i -> Int32.to_string i
   | ConstLong l -> Int64.to_string l ^ "L"
   | ConstUInt u -> UInt32.to_string u ^ "U"
@@ -25,6 +29,8 @@ let int_zero = ConstInt Int32.zero
 let int_one = ConstInt Int32.one
 
 let type_of_const = function
+  | ConstChar _ -> Types.SChar
+  | ConstUChar _ -> Types.UChar
   | ConstInt _ -> Types.Int
   | ConstLong _ -> Types.Long
   | ConstUInt _ -> Types.UInt

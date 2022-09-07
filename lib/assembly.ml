@@ -35,6 +35,7 @@ type binary_operator = Add | Sub | Mult | DivDouble | And | Or | Xor
 type cond_code = E | NE | G | GE | L | LE | A | AE | B | BE
 
 type asm_type =
+  | Byte
   | Longword
   | Quadword
   | Double
@@ -42,8 +43,18 @@ type asm_type =
 
 type instruction =
   | Mov of asm_type * operand * operand
-  | Movsx of operand * operand
-  | MovZeroExtend of operand * operand
+  | Movsx of {
+      src_type : asm_type;
+      dst_type : asm_type;
+      src : operand;
+      dst : operand;
+    }
+  | MovZeroExtend of {
+      src_type : asm_type;
+      dst_type : asm_type;
+      src : operand;
+      dst : operand;
+    }
   | Lea of operand * operand
   | Cvttsd2si of asm_type * operand * operand
   | Cvtsi2sd of asm_type * operand * operand

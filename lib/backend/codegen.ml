@@ -24,6 +24,8 @@ let add_constant ?(alignment = 8) dbl =
     name
 
 let convert_val = function
+  | Tacky.Constant (ConstChar c) -> Assembly.Imm (Int8.to_int64 c)
+  | Tacky.Constant (ConstUChar uc) -> Assembly.Imm (UInt8.to_int64 uc)
   | Tacky.Constant (ConstInt i) -> Assembly.Imm (Int32.to_int64 i)
   | Tacky.Constant (ConstLong l) -> Imm l
   | Tacky.Constant (ConstUInt u) -> Imm (UInt32.to_int64 u)
@@ -36,6 +38,7 @@ let convert_val = function
 let convert_type = function
   | Types.Int | UInt -> Assembly.Longword
   | Long | ULong | Pointer _ -> Quadword
+  | Char | SChar | UChar -> Byte
   | Double -> Double
   | Array _ as t ->
       ByteArray
@@ -45,6 +48,7 @@ let convert_type = function
       [@coverage off]
 
 let tacky_type = function
+  (* note: this reports the type of ConstChar as SChar instead of Char, doesn't matter in this context *)
   | Tacky.Constant c -> Const.type_of_const c
   | Tacky.Var v -> (Symbols.get v).t
 
@@ -300,31 +304,78 @@ let convert_instruction = function
   | Tacky.SignExtend { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      [ Movsx (asm_src, asm_dst) ]
+      [
+        Movsx
+          {
+            src_type = asm_type src;
+            dst_type = asm_type dst;
+            src = asm_src;
+            dst = asm_dst;
+          };
+      ]
   | Tacky.Truncate { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      [ Mov (Longword, asm_src, asm_dst) ]
+      [ Mov (asm_type dst, asm_src, asm_dst) ]
   | Tacky.ZeroExtend { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      [ MovZeroExtend (asm_src, asm_dst) ]
+      [
+        MovZeroExtend
+          {
+            src_type = asm_type src;
+            dst_type = asm_type dst;
+            src = asm_src;
+            dst = asm_dst;
+          };
+      ]
   | Tacky.IntToDouble { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
       let t = asm_type src in
-      [ Cvtsi2sd (t, asm_src, asm_dst) ]
+      if t = Byte then
+        [
+          Movsx
+            {
+              src_type = Byte;
+              dst_type = Longword;
+              src = asm_src;
+              dst = Reg R9;
+            };
+          Cvtsi2sd (Longword, Reg R9, asm_dst);
+        ]
+      else [ Cvtsi2sd (t, asm_src, asm_dst) ]
   | Tacky.DoubleToInt { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
       let t = asm_type dst in
-      [ Cvttsd2si (t, asm_src, asm_dst) ]
+      if t = Byte then
+        [ Cvttsd2si (Longword, asm_src, Reg R9); Mov (Byte, Reg R9, asm_dst) ]
+      else [ Cvttsd2si (t, asm_src, asm_dst) ]
   | Tacky.UIntToDouble { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      if tacky_type src = Types.UInt then
+      if tacky_type src = Types.UChar then
         [
-          MovZeroExtend (asm_src, Reg R9); Cvtsi2sd (Quadword, Reg R9, asm_dst);
+          MovZeroExtend
+            {
+              src_type = Byte;
+              dst_type = Longword;
+              src = asm_src;
+              dst = Reg R9;
+            };
+          Cvtsi2sd (Longword, Reg R9, asm_dst);
+        ]
+      else if tacky_type src = Types.UInt then
+        [
+          MovZeroExtend
+            {
+              src_type = Longword;
+              dst_type = Quadword;
+              src = asm_src;
+              dst = Reg R9;
+            };
+          Cvtsi2sd (Quadword, Reg R9, asm_dst);
         ]
       else
         let out_of_bounds = Unique_ids.make_label "ulong2dbl.oob" in
@@ -353,7 +404,9 @@ let convert_instruction = function
   | Tacky.DoubleToUInt { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      if tacky_type dst = Types.UInt then
+      if tacky_type dst = Types.UChar then
+        [ Cvttsd2si (Longword, asm_src, Reg R9); Mov (Byte, Reg R9, asm_dst) ]
+      else if tacky_type dst = Types.UInt then
         Assembly.
           [
             Cvttsd2si (Quadword, asm_src, Reg R9);
@@ -455,6 +508,9 @@ let convert_top_level = function
   | Tacky.StaticVariable { name; global; t; init } ->
       Assembly.StaticVariable
         { name; global; alignment = get_var_alignment t; init }
+  | Tacky.StaticConstant { name; t; init } ->
+      Assembly.StaticConstant
+        { name; alignment = Type_utils.get_alignment t; init }
 
 let convert_constant (key, (name, alignment)) =
   let dbl = Int64.float_of_bits key in
@@ -466,6 +522,8 @@ let convert_constant (key, (name, alignment)) =
 let convert_symbol name = function
   | Symbols.{ t = Types.FunType _; attrs = FunAttr { defined; _ } } ->
       Assembly_symbols.add_fun name defined
+  | { t; attrs = ConstAttr _ } ->
+      Assembly_symbols.add_constant name (convert_type t)
   | Symbols.{ t; attrs = StaticAttr _; _ } ->
       Assembly_symbols.add_var name (convert_var_type t) true
   | Symbols.{ t; _ } -> Assembly_symbols.add_var name (convert_var_type t) false
