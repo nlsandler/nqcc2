@@ -22,7 +22,7 @@ let show_tacky_val = function Constant c -> Const.show c | Var v -> v
 let pp_tacky_val fmt v = Format.pp_print_string fmt (show_tacky_val v)
 
 type instruction =
-  | Return of tacky_val
+  | Return of tacky_val option
   | SignExtend of { src : tacky_val; dst : tacky_val }
   | ZeroExtend of { src : tacky_val; dst : tacky_val }
   | DoubleToInt of { src : tacky_val; dst : tacky_val }
@@ -52,7 +52,7 @@ type instruction =
   | JumpIfZero of tacky_val * string
   | JumpIfNotZero of tacky_val * string
   | Label of string
-  | FunCall of { f : string; args : tacky_val list; dst : tacky_val }
+  | FunCall of { f : string; args : tacky_val list; dst : tacky_val option }
 [@@deriving show { with_path = false }]
 
 type top_level =

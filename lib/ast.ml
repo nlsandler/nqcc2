@@ -35,7 +35,7 @@ module CommonAst = struct
   [@@deriving show]
 
   type ('init_t, 'exp_t) statement =
-    | Return of 'exp_t
+    | Return of 'exp_t option
     | Expression of 'exp_t
     | If of {
         condition : 'exp_t;
@@ -106,6 +106,8 @@ module Untyped = struct
     | Dereference of exp
     | AddrOf of exp
     | Subscript of { ptr : exp; index : exp }
+    | SizeOf of exp
+    | SizeOfT of Types.t
   [@@deriving show]
 
   type initializr = SingleInit of exp | CompoundInit of initializr list
@@ -130,6 +132,8 @@ module Typed = struct
     | Dereference of exp
     | AddrOf of exp
     | Subscript of { ptr : exp; index : exp }
+    | SizeOf of exp
+    | SizeOfT of Types.t
   [@@deriving show]
 
   and exp = { e : inner_exp; t : Types.t }
