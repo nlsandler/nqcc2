@@ -8,3 +8,6 @@ val is_integer : Types.t -> bool
 val is_arithmetic : Types.t -> bool
 val is_array : Types.t -> bool
 val is_character : Types.t -> bool
+val is_scalar : Types.t -> bool
+val is_complete : Types.t -> bool
+val is_complete_pointer : Types.t -> bool

@@ -42,8 +42,9 @@ let convert_type = function
   | Array _ as t ->
       ByteArray
         { size = Type_utils.get_size t; alignment = Type_utils.get_alignment t }
-  | FunType _ ->
-      failwith "Internal error, converting function type to assembly"
+  | (FunType _ | Void) as t ->
+      failwith
+        ("Internal error, converting type to assembly: " ^ Types.show t)
       [@coverage off]
 
 let tacky_type = function
@@ -168,9 +169,15 @@ let convert_function_call f args dst =
   let instructions = instructions @ dealloc in
 
   (* retrieve return value *)
-  let assembly_dst = convert_val dst in
-  let return_reg = if asm_type dst = Double then Assembly.XMM0 else AX in
-  instructions @ [ Mov (asm_type dst, Reg return_reg, assembly_dst) ]
+  let retrieve_result =
+    match dst with
+    | Some d ->
+        let assembly_dst = convert_val d in
+        let return_reg = if asm_type d = Double then Assembly.XMM0 else AX in
+        [ Assembly.Mov (asm_type d, Reg return_reg, assembly_dst) ]
+    | None -> []
+  in
+  instructions @ retrieve_result
 
 let convert_instruction = function
   | Tacky.Copy { src; dst } ->
@@ -178,11 +185,12 @@ let convert_instruction = function
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
       Assembly.[ Mov (t, asm_src, asm_dst) ]
-  | Tacky.Return tacky_val ->
+  | Tacky.Return (Some tacky_val) ->
       let t = asm_type tacky_val in
       let asm_val = convert_val tacky_val in
       let ret_reg = if t = Assembly.Double then Assembly.XMM0 else AX in
       [ Mov (t, asm_val, Reg ret_reg); Ret ]
+  | Tacky.Return None -> [ Ret ]
   | Tacky.Unary { op = Not; src; dst } ->
       let src_t = asm_type src in
       let dst_t = asm_type dst in
