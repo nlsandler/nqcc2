@@ -99,12 +99,13 @@ module Private = struct
 
   (* Helper function to check whether a token is a type specifier *)
   let is_type_specifier = function
-    | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned | T.KWDouble | T.KWChar ->
+    | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned | T.KWDouble | T.KWChar
+    | T.KWVoid ->
         true
     | _ -> false
 
   (* <type-specifier> ::= "int" | "long" | "unsigned" | "signed" | "double"
-   *                    | "char" *)
+   *                    | "char" | "void" *)
   let parse_type_specifier tokens =
     let spec = Tok_stream.take_token tokens in
     if is_type_specifier spec then spec
@@ -152,6 +153,7 @@ module Private = struct
        same specifiers *)
     let specifier_list = List.sort Tokens.compare specifier_list in
     match specifier_list with
+    | [ T.KWVoid ] -> Types.Void
     | [ T.KWDouble ] -> Types.Double
     | [ T.KWChar ] -> Types.Char
     | [ T.KWChar; T.KWSigned ] -> Types.SChar
@@ -163,6 +165,7 @@ module Private = struct
              <> List.sort compare specifier_list
           || List.mem T.KWDouble specifier_list
           || List.mem T.KWChar specifier_list
+          || List.mem T.KWVoid specifier_list
           || List.mem T.KWSigned specifier_list
              && List.mem T.KWUnsigned specifier_list
         then raise (ParseError "Invalid type specifier")
@@ -383,6 +386,17 @@ module Private = struct
     | T.GreaterOrEqual -> Ast.GreaterOrEqual
     | other -> raise_error ~expected:(Name "a binary operator") ~actual:other
 
+  (* <type-name> ::= { <type-specifier> }+ [ <abstract-declarator> ] *)
+  let parse_type_name tokens =
+    let type_specifiers = parse_type_specifier_list tokens in
+    let base_type = parse_type type_specifiers in
+    (* check for optional abstract declarator *)
+    match Tok_stream.peek tokens with
+    | T.CloseParen -> base_type
+    | _ ->
+        let abstract_decl = parse_abstract_declarator tokens in
+        process_abstract_declarator abstract_decl base_type
+
   (* <primary-exp> ::= <const> | <identifier> | "(" <exp> ")" | { <string> }+
    *                 | <identifier> "(" [ <argument-list> ] ")"
    *)
@@ -453,44 +467,58 @@ module Private = struct
     in
     postfix_loop primary
 
-  (* <unary-exp> ::= <unop> <unary-exp>
-   *               | "(" { <type-specifier> }+ [ <abstract-declarator> ] ")" <unary-exp>
+  (* <unary-exp> ::= <unop> <cast-exp>
+   *               | "sizeof" <unary-exp>
+   *               | "sizeof" "(" <type-name> ")"
    *               | <postfix-exp>
    *)
   and parse_unary_exp tokens =
-    match Tok_stream.npeek 2 tokens with
+    match Tok_stream.npeek 3 tokens with
     (* unary expressions *)
     | T.Star :: _ ->
         let _ = Tok_stream.take_token tokens in
-        let inner_exp = parse_unary_exp tokens in
+        let inner_exp = parse_cast_exp tokens in
         Ast.Dereference inner_exp
     | T.Ampersand :: _ ->
         let _ = Tok_stream.take_token tokens in
-        let inner_exp = parse_unary_exp tokens in
+        let inner_exp = parse_cast_exp tokens in
         Ast.AddrOf inner_exp
     | (T.Hyphen | T.Tilde | T.Bang) :: _ ->
         let operator = parse_unop tokens in
-        let inner_exp = parse_unary_exp tokens in
+        let inner_exp = parse_cast_exp tokens in
         Ast.Unary (operator, inner_exp)
+    (* "sizeof" "(" <type-name> ")"
+
+       Need to look ahead three tokens to tell whether operand is a type name or
+       parenthesized expression *)
+    | [ T.KWSizeOf; T.OpenParen; t ] when is_type_specifier t ->
+        (* consume sizeof keyword and open paren *)
+        let _ = Tok_stream.take_token tokens in
+        let _ = Tok_stream.take_token tokens in
+        let typ = parse_type_name tokens in
+        expect T.CloseParen tokens;
+        Ast.SizeOfT typ
+    (* "sizeof" <unary-exp> *)
+    | T.KWSizeOf :: _ ->
+        let _ = Tok_stream.take_token tokens in
+        let inner_exp = parse_unary_exp tokens in
+        Ast.SizeOf inner_exp
+    (* Postfix expression *)
+    | _ -> parse_postfix_exp tokens
+
+  (* <cast-exp> ::= "(" <type-name> ")" <cast-exp>
+   *              | <unary-exp> *)
+  and parse_cast_exp tokens =
+    match Tok_stream.npeek 2 tokens with
     (* Cast expression - need to look ahead two tokens to distinguish this from
        parenthesized expressions *)
     | [ T.OpenParen; t ] when is_type_specifier t ->
         let _ = Tok_stream.take_token tokens in
-        let type_specifiers = parse_type_specifier_list tokens in
-        let base_type = parse_type type_specifiers in
-        (* check for optional abstract declarator *)
-        let target_type =
-          match Tok_stream.peek tokens with
-          | T.CloseParen -> base_type
-          | _ ->
-              let abstract_decl = parse_abstract_declarator tokens in
-              process_abstract_declarator abstract_decl base_type
-        in
+        let target_type = parse_type_name tokens in
         let _ = expect T.CloseParen tokens in
-        let inner_exp = parse_unary_exp tokens in
+        let inner_exp = parse_cast_exp tokens in
         Ast.Cast { target_type; e = inner_exp }
-    (* Postfix expression *)
-    | _ -> parse_postfix_exp tokens
+    | _ -> parse_unary_exp tokens
 
   (* Helper function to parse the middle of a conditional expression:
    * "?" <exp> ":"
@@ -501,10 +529,10 @@ module Private = struct
     expect Colon tokens;
     e
 
-  (* <exp> ::= <factor> | <exp> <binop> <exp> | <exp> "?" <exp> ":" <exp>
+  (* <exp> ::= <cast-exp> | <exp> <binop> <exp> | <exp> "?" <exp> ":" <exp>
    * Precedence parsing algorithm (see Listing 6-9) *)
   and parse_exp min_prec tokens =
-    let initial_factor = parse_unary_exp tokens in
+    let initial_factor = parse_cast_exp tokens in
     let next_token = Tok_stream.peek tokens in
     let rec parse_exp_loop left next =
       match get_precedence next with
@@ -730,7 +758,7 @@ module Private = struct
       let opt_e = parse_optional_exp T.Semicolon tokens in
       Ast.InitExp opt_e
 
-  (* <statement> ::= "return" <exp> ";"
+  (* <statement> ::= "return" [ <exp> ] ";"
    *               | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
    *               | <block>
    *               | "break" ";"
@@ -743,13 +771,12 @@ module Private = struct
    *)
   and parse_statement tokens =
     match Tok_stream.peek tokens with
-    (* "return" <exp> ";" *)
+    (* "return" [ <exp> ] ";" *)
     | T.KWReturn ->
         (* consume return keyword *)
         let _ = Tok_stream.take_token tokens in
-        let exp = parse_exp 0 tokens in
-        expect T.Semicolon tokens;
-        Ast.Return exp
+        let opt_exp = parse_optional_exp T.Semicolon tokens in
+        Ast.Return opt_exp
     (* "if" "(" <exp> ")" <statement> [ "else" <statement> ] *)
     | T.KWIf ->
         (* if statement - consume if keyword *)

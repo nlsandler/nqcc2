@@ -39,6 +39,8 @@ module UntypedExp = struct
     | Dereference of exp
     | AddrOf of exp
     | Subscript of { ptr : exp; index : exp }
+    | SizeOf of exp
+    | SizeOfT of Types.t
   [@@deriving show]
 
   type initializr = SingleInit of exp | CompoundInit of initializr list
@@ -62,6 +64,8 @@ module TypedExp = struct
     | Dereference of exp
     | AddrOf of exp
     | Subscript of { ptr : exp; index : exp }
+    | SizeOf of exp
+    | SizeOfT of Types.t
   [@@deriving show]
 
   and exp = { e : inner_exp; t : Types.t } [@@deriving show]
@@ -129,7 +133,7 @@ module BlockItems (Exp : EXP) = struct
   [@@deriving show]
 
   type statement =
-    | Return of exp
+    | Return of exp option
     | Expression of exp
     | If of {
         condition : exp;

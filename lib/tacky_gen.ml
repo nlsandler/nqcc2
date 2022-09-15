@@ -1,3 +1,5 @@
+open Unsigned
+
 module Ast = struct
   include Ast.Typed
 end
@@ -8,6 +10,9 @@ end
 
 let break_label id = "break." ^ id
 let continue_label id = "continue." ^ id
+
+(* use this as the "result" of void expressions that don't return a result *)
+let dummy_operand = T.Constant Const.int_zero
 
 let create_tmp t =
   let name = Unique_ids.make_temporary () in
@@ -41,6 +46,10 @@ let convert_binop = function
   | And | Or ->
       failwith "Internal error, cannot convert these directly to TACKY binops"
       [@coverage off]
+
+let eval_size t =
+  let size = Type_utils.get_size t in
+  T.Constant (Const.ConstULong (UInt64.of_int size))
 
 (* an expression result that may or may not be lvalue converted *)
 type exp_result =
@@ -77,6 +86,8 @@ let rec emit_tacky_for_exp Ast.{ e; t } =
   | Ast.Dereference inner -> emit_dereference inner
   | Ast.AddrOf inner -> emit_addr_of t inner
   | Ast.Subscript { ptr; index } -> emit_subscript t ptr index
+  | Ast.SizeOfT t -> ([], PlainOperand (eval_size t))
+  | Ast.SizeOf inner -> ([], PlainOperand (eval_size inner.t))
 
 (* helper functions for individual expression *)
 and emit_unary_expression t op inner =
@@ -91,7 +102,8 @@ and emit_unary_expression t op inner =
 and emit_cast_expression target_type inner =
   let eval_inner, result = emit_tacky_and_convert inner in
   let inner_type = Type_utils.get_type inner in
-  if inner_type = target_type then (eval_inner, PlainOperand result)
+  if inner_type = target_type || target_type = Void then
+    (eval_inner, PlainOperand result)
   else
     let dst_name = create_tmp target_type in
     let dst = T.Var dst_name in
@@ -242,29 +254,42 @@ and emit_conditional_expression t condition e1 e2 =
   let eval_v2, v2 = emit_tacky_and_convert e2 in
   let e2_label = Unique_ids.make_label "conditional_else" in
   let end_label = Unique_ids.make_label "conditional_end" in
-  let dst_name = create_tmp t in
-  let dst = T.Var dst_name in
-  let instructions =
-    eval_cond
-    @ (T.JumpIfZero (c, e2_label) :: eval_v1)
-    @ T.Copy { src = v1; dst }
+  let dst =
+    if t = Void then dummy_operand
+    else
+      let dst_name = create_tmp t in
+      T.Var dst_name
+  in
+  let common_instructions =
+    eval_cond @ (T.JumpIfZero (c, e2_label) :: eval_v1)
+  in
+  let remaining_instructions =
+    if t = Void then
+      (T.Jump end_label :: Label e2_label :: eval_v2) @ [ Label end_label ]
+    else
+      T.Copy { src = v1; dst }
       :: T.Jump end_label
       :: T.Label e2_label
       :: eval_v2
-    @ (T.Copy { src = v2; dst } :: [ T.Label end_label ])
+      @ (T.Copy { src = v2; dst } :: [ T.Label end_label ])
   in
-  (instructions, PlainOperand dst)
+  (common_instructions @ remaining_instructions, PlainOperand dst)
 
 and emit_fun_call t f args =
-  let dst_name = create_tmp t in
-  let dst = T.Var dst_name in
+  let dst =
+    if t = Void then None
+    else
+      let dst_name = create_tmp t in
+      Some (T.Var dst_name)
+  in
   let arg_instructions, arg_vals =
     List.split (List.map emit_tacky_and_convert args)
   in
   let instructions =
     List.flatten arg_instructions @ [ T.FunCall { f; args = arg_vals; dst } ]
   in
-  (instructions, PlainOperand dst)
+  let dst_val = Option.value dst ~default:dummy_operand in
+  (instructions, PlainOperand dst_val)
 
 and emit_dereference inner =
   let instructions, result = emit_tacky_and_convert inner in
@@ -331,7 +356,11 @@ let rec emit_compound_init name offset = function
 
 let rec emit_tacky_for_statement = function
   | Ast.Return e ->
-      let eval_exp, v = emit_tacky_and_convert e in
+      let eval_exp, v =
+        match Option.map emit_tacky_and_convert e with
+        | Some (instrs, result) -> (instrs, Some result)
+        | None -> ([], None)
+      in
       eval_exp @ [ T.Return v ]
   | Ast.Expression e ->
       (* evaluate expression but don't use result *)
@@ -451,7 +480,7 @@ let emit_fun_declaration = function
       let body_instructions =
         List.concat_map emit_tacky_for_block_item block_items
       in
-      let extra_return = T.(Return (Constant Const.int_zero)) in
+      let extra_return = T.(Return (Some (Constant Const.int_zero))) in
       Some
         (T.Function
            { name; global; params; body = body_instructions @ [ extra_return ] })

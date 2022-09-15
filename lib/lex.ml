@@ -53,6 +53,7 @@ let convert_identifier = function
   | "signed" -> T.KWSigned
   | "double" -> T.KWDouble
   | "char" -> T.KWChar
+  | "sizeof" -> T.KWSizeOf
   | other -> T.Identifier other
 
 let convert_int s = T.ConstInt (Z.of_string s)

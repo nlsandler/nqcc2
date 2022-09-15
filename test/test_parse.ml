@@ -39,7 +39,7 @@ let%test "statement" =
   Parse.Private.parse_statement
     (Tok_stream.of_list
        [ Tokens.KWReturn; Tokens.ConstInt Z.(~$4); Tokens.Semicolon ])
-  = Ast.Return (Ast.Constant (Const.ConstInt (Int32.of_int 4)))
+  = Ast.Return (Some (Ast.Constant (Const.ConstInt (Int32.of_int 4))))
 
 let%test "error" =
   match Parse.parse [ Tokens.KWInt ] with
