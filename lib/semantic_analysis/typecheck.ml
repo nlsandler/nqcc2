@@ -15,6 +15,16 @@ let is_lvalue T.{ e; _ } =
   | T.Dereference _ | T.Subscript _ | T.Var _ | T.String _ -> true
   | _ -> false
 
+let rec validate_type = function
+  | Types.Array { elem_type; _ } ->
+      if is_complete elem_type then validate_type elem_type
+      else failwith "Array of incomplete type"
+  | Types.Pointer t -> validate_type t
+  | FunType { param_types; ret_type } ->
+      List.iter validate_type param_types;
+      validate_type ret_type
+  | Char | SChar | UChar | Int | Long | UInt | ULong | Double | Void -> ()
+
 let convert_to e target_type =
   let cast = T.Cast { target_type; e } in
   set_type cast target_type
@@ -43,6 +53,10 @@ let get_common_pointer_type e1 e2 =
   if T.(e1.t = e2.t) then e1.t
   else if is_null_pointer_constant e1.e then e2.t
   else if is_null_pointer_constant e2.e then e1.t
+  else if
+    (e1.t = Pointer Void && is_pointer e2.t)
+    || (e2.t = Pointer Void && is_pointer e1.t)
+  then Pointer Void
   else failwith "Expressions have incompatible types"
 
 let convert_by_assignment e target_type =
@@ -51,6 +65,10 @@ let convert_by_assignment e target_type =
     convert_to e target_type
   else if is_null_pointer_constant e.e && is_pointer target_type then
     convert_to e target_type
+  else if
+    (target_type = Pointer Void && is_pointer e.t)
+    || (is_pointer target_type && e.t = Pointer Void)
+  then convert_to e target_type
   else failwith "Cannot convert type for asignment"
 
 let typecheck_var v =
@@ -100,29 +118,43 @@ let rec typecheck_exp = function
   | Dereference inner -> typecheck_dereference inner
   | AddrOf inner -> typecheck_addr_of inner
   | Subscript { ptr; index } -> typecheck_subscript ptr index
+  | SizeOfT t -> typecheck_size_of_t t
+  | SizeOf e -> typecheck_size_of e
 
 and typecheck_cast target_type inner =
-  match target_type with
-  | Array _ -> failwith "Cannot cast to array type"
-  | _ -> (
-      let typed_inner = typecheck_and_convert inner in
-      match (target_type, typed_inner.T.t) with
-      | Types.Double, Types.Pointer _ | Pointer _, Double ->
-          failwith "Cannot cast between pointer and double"
-      | _ ->
-          let cast_exp =
-            T.Cast { target_type; e = typecheck_and_convert inner }
-          in
-          set_type cast_exp target_type)
+  validate_type target_type;
+  let typed_inner = typecheck_and_convert inner in
+  match (target_type, typed_inner.T.t) with
+  | Types.Double, Types.Pointer _ | Pointer _, Double ->
+      failwith "Cannot cast between pointer and double"
+  | Void, _ ->
+      let cast_exp = T.Cast { target_type = Void; e = typed_inner } in
+      set_type cast_exp Void
+  | _ ->
+      if not (is_scalar target_type) then
+        failwith "Can only cast to scalar types or void"
+      else if not (is_scalar typed_inner.T.t) then
+        failwith "Can only cast scalar expressions to non-void type"
+      else
+        let cast_exp =
+          T.Cast { target_type; e = typecheck_and_convert inner }
+        in
+        set_type cast_exp target_type
+
+(* convenience function to type check an expression and validate that it's scalar*)
+and typecheck_scalar e =
+  let typed_e = typecheck_and_convert e in
+  if is_scalar typed_e.t then typed_e
+  else failwith "A scalar operand is required"
 
 and typecheck_not inner =
-  let typed_inner = typecheck_and_convert inner in
+  let typed_inner = typecheck_scalar inner in
   let not_exp = T.Unary (Not, typed_inner) in
   set_type not_exp Int
 
 and typecheck_complement inner =
   let typed_inner = typecheck_and_convert inner in
-  if typed_inner.t = Double || is_pointer typed_inner.t then
+  if not (is_integer typed_inner.t) then
     failwith "Bitwise complement only valid for integer types"
   else
     (* promote character types to int *)
@@ -135,45 +167,59 @@ and typecheck_complement inner =
 
 and typecheck_negate inner =
   let typed_inner = typecheck_and_convert inner in
-  match typed_inner.t with
-  | Pointer _ -> failwith "Can't negate a pointer"
-  | _ ->
-      (* promote character types to int *)
-      let typed_inner =
-        if is_character typed_inner.t then convert_to typed_inner Int
-        else typed_inner
-      in
-      let negate_exp = T.Unary (Negate, typed_inner) in
-      set_type negate_exp typed_inner.t
+  if is_arithmetic typed_inner.t then
+    (* promote character types to int *)
+    let typed_inner =
+      if is_character typed_inner.t then convert_to typed_inner Int
+      else typed_inner
+    in
+    let negate_exp = T.Unary (Negate, typed_inner) in
+    set_type negate_exp typed_inner.t
+  else failwith "Can only negate arithmetic types"
 
 and typecheck_incr op inner =
   let typed_inner = typecheck_and_convert inner in
-  if is_lvalue typed_inner then
+  if
+    is_lvalue typed_inner
+    && (is_arithmetic typed_inner.t || is_complete_pointer typed_inner.t)
+  then
     let typed_exp = T.Unary (op, typed_inner) in
     set_type typed_exp typed_inner.t
-  else failwith "Operand of ++/-- must be an lvalue"
+  else
+    failwith
+      "Operand of ++/-- must be an lvalue with arithmetic or pointer type"
 
 and typecheck_postfix_decr e =
   let typed_e = typecheck_and_convert e in
-  if is_lvalue typed_e then
+  if
+    is_lvalue typed_e
+    && (is_arithmetic typed_e.t || is_complete_pointer typed_e.t)
+  then
     (* result has same value as e; no conversions required.
      * (We need to convert integer "1" and to their common type, but that will
      * always be the same type as e, at least w/ types we've added so far *)
     let result_type = get_type typed_e in
     set_type (PostfixDecr typed_e) result_type
-  else failwith "operand of postfix -- must be an lvalue"
+  else
+    failwith
+      "operand of postfix -- must be an lvalue with arithmetic or pointer type"
 
 and typecheck_postfix_incr e =
   let typed_e = typecheck_and_convert e in
-  if is_lvalue typed_e then
+  if
+    is_lvalue typed_e
+    && (is_arithmetic typed_e.t || is_complete_pointer typed_e.t)
+  then
     (* Same deal as postfix decrement *)
     let result_type = get_type typed_e in
     set_type (PostfixIncr typed_e) result_type
-  else failwith "operand of postfix ++ must be an lvalue"
+  else
+    failwith
+      "operand of postfix ++ must be an lvalue with arithmetic or pointer type"
 
 and typecheck_logical op e1 e2 =
-  let typed_e1 = typecheck_and_convert e1 in
-  let typed_e2 = typecheck_and_convert e2 in
+  let typed_e1 = typecheck_scalar e1 in
+  let typed_e2 = typecheck_scalar e2 in
   let typed_binexp = T.Binary (op, typed_e1, typed_e2) in
   set_type typed_binexp Int
 
@@ -186,11 +232,11 @@ and typecheck_addition e1 e2 =
     let converted_e2 = convert_to typed_e2 common_type in
     let add_exp = T.Binary (Add, converted_e1, converted_e2) in
     set_type add_exp common_type
-  else if is_pointer typed_e1.t && is_integer typed_e2.t then
+  else if is_complete_pointer typed_e1.t && is_integer typed_e2.t then
     let converted_e2 = convert_to typed_e2 Types.Long in
     let add_exp = T.Binary (Add, typed_e1, converted_e2) in
     set_type add_exp typed_e1.t
-  else if is_pointer typed_e2.t && is_integer typed_e1.t then
+  else if is_complete_pointer typed_e2.t && is_integer typed_e1.t then
     let converted_e1 = convert_to typed_e1 Types.Long in
     let add_exp = T.Binary (Add, converted_e1, typed_e2) in
     set_type add_exp typed_e2.t
@@ -205,11 +251,11 @@ and typecheck_subtraction e1 e2 =
     let converted_e2 = convert_to typed_e2 common_type in
     let sub_exp = T.Binary (Subtract, converted_e1, converted_e2) in
     set_type sub_exp common_type
-  else if is_pointer typed_e1.t && is_integer typed_e2.t then
+  else if is_complete_pointer typed_e1.t && is_integer typed_e2.t then
     let converted_e2 = convert_to typed_e2 Types.Long in
     let sub_exp = T.Binary (Subtract, typed_e1, converted_e2) in
     set_type sub_exp typed_e1.t
-  else if is_pointer typed_e1.t && typed_e1.t = typed_e2.t then
+  else if is_complete_pointer typed_e1.t && typed_e1.t = typed_e2.t then
     let sub_exp = T.Binary (Subtract, typed_e1, typed_e2) in
     set_type sub_exp Types.Long
   else failwith "Invalid operands for subtraction"
@@ -217,9 +263,7 @@ and typecheck_subtraction e1 e2 =
 and typecheck_multiplicative op e1 e2 =
   let typed_e1 = typecheck_and_convert e1 in
   let typed_e2 = typecheck_and_convert e2 in
-  if is_pointer typed_e1.t || is_pointer typed_e2.t then
-    failwith "multiplicative operations not permitted on pointers"
-  else
+  if is_arithmetic typed_e1.t && is_arithmetic typed_e2.t then
     let common_type = get_common_type typed_e1.t typed_e2.t in
     let converted_e1 = convert_to typed_e1 common_type in
     let converted_e2 = convert_to typed_e2 common_type in
@@ -232,6 +276,7 @@ and typecheck_multiplicative op e1 e2 =
           ("Internal error: "
           ^ T.show_binary_operator op
           ^ "isn't a multiplicative operator") [@coverage off]
+  else failwith "Can only multiply arithmetic types"
 
 and typecheck_equality op e1 e2 =
   let typed_e1 = typecheck_and_convert e1 in
@@ -239,7 +284,9 @@ and typecheck_equality op e1 e2 =
   let common_type =
     if is_pointer typed_e1.t || is_pointer typed_e2.t then
       get_common_pointer_type typed_e1 typed_e2
-    else get_common_type typed_e1.t typed_e2.t
+    else if is_arithmetic typed_e1.t && is_arithmetic typed_e2.t then
+      get_common_type typed_e1.t typed_e2.t
+    else failwith "Invalid operands for equality"
   in
   let converted_e1 = convert_to typed_e1 common_type in
   let converted_e2 = convert_to typed_e2 common_type in
@@ -249,18 +296,20 @@ and typecheck_equality op e1 e2 =
 and typecheck_bitshift op e1 e2 =
   let typed_e1 = typecheck_and_convert e1 in
   let typed_e2 = typecheck_and_convert e2 in
-
-  (* promote both operands to from character to int type *)
-  let typed_e1 =
-    if is_character typed_e1.t then convert_to typed_e1 Types.Int else typed_e1
-  in
-
-  let typed_e2 =
-    if is_character typed_e2.t then convert_to typed_e2 Types.Int else typed_e2
-  in
   if not (is_integer (get_type typed_e1) && is_integer (get_type typed_e2)) then
     failwith "Both operands of bit shift operation must be integers"
   else
+    (* promote both operands from character to int type *)
+    let typed_e1 =
+      if is_character typed_e1.t then convert_to typed_e1 Types.Int
+      else typed_e1
+    in
+
+    let typed_e2 =
+      if is_character typed_e2.t then convert_to typed_e2 Types.Int
+      else typed_e2
+    in
+
     (* Don't perform usual arithmetic conversions; result has type of left operand *)
     let typed_binexp = T.Binary (op, typed_e1, typed_e2) in
     set_type typed_binexp (get_type typed_e1)
@@ -316,15 +365,16 @@ and typecheck_compound_assignment op lhs rhs =
             (Printf.sprintf "Operand %s only supports integer operands"
                (U.show_binary_operator op))
       (* *= and /= only support arithmetic types *)
-      | (Multiply | Divide) when is_pointer lhs_type || is_pointer rhs_type ->
+      | (Multiply | Divide)
+        when (not (is_arithmetic lhs_type)) || not (is_arithmetic rhs_type) ->
           failwith
-            (Printf.sprintf "Operand %s does not support pointer operands"
+            (Printf.sprintf "Operand %s only supports arithmetic operands"
                (U.show_binary_operator op))
       (* += and -= require either two arithmetic operators, or pointer on LHS and integer on RHS *)
       | (Add | Subtract)
         when not
                ((is_arithmetic rhs_type && is_arithmetic lhs_type)
-               || (is_pointer lhs_type && is_integer rhs_type)) ->
+               || (is_complete_pointer lhs_type && is_integer rhs_type)) ->
           failwith "Invalid types for +=/-="
       | _ -> ()
     in
@@ -361,16 +411,19 @@ and typecheck_compound_assignment op lhs rhs =
   else failwith "Left-hand side of compound assignment must be an lvalue "
 
 and typecheck_conditional condition then_exp else_exp =
-  let typed_conditon = typecheck_and_convert condition in
+  let typed_conditon = typecheck_scalar condition in
   let typed_then = typecheck_and_convert then_exp in
   let typed_else = typecheck_and_convert else_exp in
-  let common_type =
-    if is_pointer typed_then.t || is_pointer typed_else.t then
+  let result_type =
+    if typed_then.t = Void && typed_else.t = Void then Types.Void
+    else if is_pointer typed_then.t || is_pointer typed_else.t then
       get_common_pointer_type typed_then typed_else
-    else get_common_type typed_then.t typed_else.t
+    else if is_arithmetic typed_then.t && is_arithmetic typed_else.t then
+      get_common_type typed_then.t typed_else.t
+    else failwith "Invalid operands for conditional"
   in
-  let converted_then = convert_to typed_then common_type in
-  let converted_else = convert_to typed_else common_type in
+  let converted_then = convert_to typed_then result_type in
+  let converted_else = convert_to typed_else result_type in
   let conditional_exp =
     T.Conditional
       {
@@ -379,7 +432,7 @@ and typecheck_conditional condition then_exp else_exp =
         else_result = converted_else;
       }
   in
-  set_type conditional_exp common_type
+  set_type conditional_exp result_type
 
 and typecheck_fun_call f args =
   let f_type = (Symbols.get f).t in
@@ -400,6 +453,7 @@ and typecheck_fun_call f args =
 and typecheck_dereference inner =
   let typed_inner = typecheck_and_convert inner in
   match get_type typed_inner with
+  | Pointer Void -> failwith "Can't dereference pointer to void"
   | Pointer referenced_t ->
       let deref_exp = T.Dereference typed_inner in
       set_type deref_exp referenced_t
@@ -417,9 +471,9 @@ and typecheck_subscript e1 e2 =
   let typed_e1 = typecheck_and_convert e1 in
   let typed_e2 = typecheck_and_convert e2 in
   let ptr_type, converted_e1, converted_e2 =
-    if is_pointer typed_e1.t && is_integer typed_e2.t then
+    if is_complete_pointer typed_e1.t && is_integer typed_e2.t then
       (typed_e1.t, typed_e1, convert_to typed_e2 Types.Long)
-    else if is_pointer typed_e2.t && is_integer typed_e1.t then
+    else if is_complete_pointer typed_e2.t && is_integer typed_e1.t then
       (typed_e2.t, convert_to typed_e1 Long, typed_e2)
     else failwith "Invalid types for subscript operation"
   in
@@ -432,6 +486,20 @@ and typecheck_subscript e1 e2 =
     T.Subscript { ptr = converted_e1; index = converted_e2 }
   in
   set_type subscript_exp result_type
+
+and typecheck_size_of_t t =
+  validate_type t;
+  if is_complete t then
+    let sizeof_exp = T.SizeOfT t in
+    set_type sizeof_exp ULong
+  else failwith "Can't apply sizeof to incomplete type"
+
+and typecheck_size_of inner =
+  let typed_inner = typecheck_exp inner in
+  if is_complete typed_inner.t then
+    let sizeof_exp = T.SizeOf typed_inner in
+    set_type sizeof_exp ULong
+  else failwith "Can't apply sizeof to incomplete type"
 
 and typecheck_and_convert e =
   let typed_e = typecheck_exp e in
@@ -507,10 +575,10 @@ let rec make_zero_init t =
   | Long -> scalar (Const.ConstLong Int64.zero)
   | ULong | Pointer _ -> scalar (Const.ConstULong UInt64.zero)
   | Double -> scalar (Const.ConstDouble Float.zero)
-  | FunType _ ->
+  | (FunType _ | Void) as t ->
       failwith
-        "Internal error: can't create zero initializer with function type"
-      [@coverage off]
+        ("Internal error: can't create zero initializer with type"
+        ^ Types.show t) [@coverage off]
 
 let rec typecheck_init target_type init =
   match (target_type, init) with
@@ -543,14 +611,22 @@ and typecheck_block_item ret_type = function
   | D d -> D (typecheck_local_decl d)
 
 and typecheck_statement ret_type = function
-  | Return e ->
-      let typed_e = typecheck_and_convert e in
-      Return (convert_by_assignment typed_e ret_type)
+  | Return (Some e) ->
+      if ret_type = Types.Void then
+        failwith "function with void return type cannot return a value"
+      else
+        let typed_e =
+          convert_by_assignment (typecheck_and_convert e) ret_type
+        in
+        Return (Some typed_e)
+  | Return None ->
+      if ret_type = Void then Return None
+      else failwith "Function with non-void return type must return a value"
   | Expression e -> Expression (typecheck_and_convert e)
   | If { condition; then_clause; else_clause } ->
       If
         {
-          condition = typecheck_and_convert condition;
+          condition = typecheck_scalar condition;
           then_clause = typecheck_statement ret_type then_clause;
           else_clause = Option.map (typecheck_statement ret_type) else_clause;
         }
@@ -566,14 +642,15 @@ and typecheck_statement ret_type = function
   | Default (s, id) -> Default (typecheck_statement ret_type s, id)
   | Switch s ->
       let typed_control = typecheck_and_convert s.control in
-      (* Perform integer promotions on controlling expression *)
-      let typed_control =
-        if is_character typed_control.t then convert_to typed_control Int
-        else typed_control
-      in
       if not (is_integer (get_type typed_control)) then
         failwith "Controlling expression in switch must have integer type"
       else
+        (* Perform integer promotions on controlling expression *)
+        let typed_control =
+          if is_character typed_control.t then convert_to typed_control Int
+          else typed_control
+        in
+
         Switch
           {
             control = typed_control;
@@ -585,7 +662,7 @@ and typecheck_statement ret_type = function
   | While { condition; body; id } ->
       While
         {
-          condition = typecheck_and_convert condition;
+          condition = typecheck_scalar condition;
           body = typecheck_statement ret_type body;
           id;
         }
@@ -593,7 +670,7 @@ and typecheck_statement ret_type = function
       DoWhile
         {
           body = typecheck_statement ret_type body;
-          condition = typecheck_and_convert condition;
+          condition = typecheck_scalar condition;
           id;
         }
   | For { init; condition; post; body; id } ->
@@ -608,7 +685,7 @@ and typecheck_statement ret_type = function
       For
         {
           init = typechecked_for_init;
-          condition = Option.map typecheck_and_convert condition;
+          condition = Option.map typecheck_scalar condition;
           post = Option.map typecheck_and_convert post;
           body = typecheck_statement ret_type body;
           id;
@@ -620,6 +697,8 @@ and typecheck_local_decl = function
   | FunDecl fd -> FunDecl (typecheck_fn_decl fd)
 
 and typecheck_local_var_decl ({ name; init; storage_class; var_type } as vd) =
+  if var_type = Void then failwith "No void declarations"
+  else validate_type var_type;
   match storage_class with
   | Some Extern ->
       if Option.is_some init then
@@ -649,8 +728,11 @@ and typecheck_local_var_decl ({ name; init; storage_class; var_type } as vd) =
       { vd with init = Option.map (typecheck_init var_type) init }
 
 and typecheck_fn_decl { name; fun_type; params; body; storage_class } =
+  validate_type fun_type;
+  (* Note: we do this _before_ adjusting param types *)
   let adjust_param_type = function
     | Types.Array { elem_type; _ } -> Types.Pointer elem_type
+    | Void -> failwith "No void params allowed"
     | t -> t
   in
   let param_ts, return_t, fun_type =
@@ -699,6 +781,8 @@ and typecheck_fn_decl { name; fun_type; params; body; storage_class } =
   T.{ name; fun_type; params; body; storage_class }
 
 let typecheck_file_scope_var_decl U.{ name; var_type; init; storage_class } =
+  if var_type = Void then failwith "void variables not allowed"
+  else validate_type var_type;
   let default_init =
     if storage_class = Some Extern then Symbols.NoInitializer else Tentative
   in

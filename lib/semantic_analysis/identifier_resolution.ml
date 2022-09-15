@@ -47,8 +47,9 @@ let rec resolve_exp id_map = function
   | Subscript { ptr; index } ->
       Subscript
         { ptr = resolve_exp id_map ptr; index = resolve_exp id_map index }
-  (* Nothing to do for constant *)
-  | (Constant _ | String _) as c -> c
+  | SizeOf e -> SizeOf (resolve_exp id_map e)
+  (* Nothing to do for expressions without subexpressions *)
+  | (Constant _ | String _ | SizeOfT _) as c -> c
 
 let resolve_optional_exp id_map = Option.map (resolve_exp id_map)
 
@@ -96,7 +97,9 @@ let resolve_for_init id_map = function
       (new_map, InitDecl resolved_decl)
 
 let rec resolve_statement id_map = function
-  | Return e -> Return (resolve_exp id_map e)
+  | Return e ->
+      let resolved_e = Option.map (resolve_exp id_map) e in
+      Return resolved_e
   | Expression e -> Expression (resolve_exp id_map e)
   | If { condition; then_clause; else_clause } ->
       If

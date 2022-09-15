@@ -10,6 +10,7 @@ type t =
   | ULong
   | Double
   | Pointer of t [@printer fun fmt typ -> Format.fprintf fmt "%a*" pp typ]
+  | Void
   | Array of { elem_type : t; size : int }
       [@printer
         fun fmt elem_type size ->

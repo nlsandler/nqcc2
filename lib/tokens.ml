@@ -36,6 +36,7 @@ type t =
   | KWDefault
   | KWStatic
   | KWExtern
+  | KWSizeOf
   (* punctuation *)
   | OpenParen
   | CloseParen
