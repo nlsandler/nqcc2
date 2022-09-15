@@ -47,7 +47,8 @@ let pp_tacky_val out = function
   | Var s -> Format.pp_print_string out s
 
 let pp_instruction out = function
-  | Return v -> Format.fprintf out "Return(%a)" pp_tacky_val v
+  | Return None -> Format.pp_print_string out "Return"
+  | Return (Some v) -> Format.fprintf out "Return(%a)" pp_tacky_val v
   | Unary { op; src; dst } ->
       Format.fprintf out "%a = %a%a" pp_tacky_val dst pp_unary_operator op
         pp_tacky_val src
@@ -64,7 +65,11 @@ let pp_instruction out = function
   | Label s ->
       Format.pp_print_break out 0 (-2);
       Format.fprintf out "%s:" s
-  | FunCall { f; args; dst } ->
+  | FunCall { f; args; dst = None } ->
+      Format.fprintf out "%s(%a)" f
+        Format.(pp_print_list ~pp_sep:comma_sep pp_tacky_val)
+        args
+  | FunCall { f; args; dst = Some dst } ->
       Format.fprintf out "%a = %s(%a)" pp_tacky_val dst f
         Format.(pp_print_list ~pp_sep:comma_sep pp_tacky_val)
         args
