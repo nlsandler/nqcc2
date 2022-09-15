@@ -37,6 +37,7 @@ let id_to_tok = function
   | "signed" -> KWSigned
   | "double" -> KWDouble
   | "char" -> KWChar
+  | "sizeof" -> KWSizeOf
   | other -> Identifier other
 
 let rec lex_helper chars =

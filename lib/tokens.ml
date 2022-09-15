@@ -32,6 +32,7 @@ type t =
   | KWContinue
   | KWStatic
   | KWExtern
+  | KWSizeOf
   (* punctuation *)
   | OpenParen
   | CloseParen

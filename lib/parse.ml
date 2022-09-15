@@ -81,17 +81,18 @@ let unescape s =
 (* getting a list of specifiers *)
 
 let is_type_specifier = function
-  | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble | KWChar -> true
+  | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble | KWChar | KWVoid ->
+      true
   | _ -> false
 
 let is_specifier = function
   | T.KWStatic | KWExtern -> true
   | other -> is_type_specifier other
 
-let rec parse_type_specifer_list tokens =
+let rec parse_type_specifier_list tokens =
   if is_type_specifier (peek tokens) then
     let spec = Stream.next tokens in
-    spec :: parse_type_specifer_list tokens
+    spec :: parse_type_specifier_list tokens
   else []
 
 let rec parse_specifier_list tokens =
@@ -110,6 +111,7 @@ let parse_type specifier_list =
    * orderings of same specifiers *)
   let specifier_list = List.sort Tokens.compare specifier_list in
   match specifier_list with
+  | [ T.KWVoid ] -> Types.Void
   | [ T.KWDouble ] -> Types.Double
   | [ T.KWChar ] -> Types.Char
   | [ T.KWChar; T.KWSigned ] -> Types.SChar
@@ -120,6 +122,7 @@ let parse_type specifier_list =
         || List.unique specifier_list <> specifier_list
         || List.mem T.KWDouble specifier_list
         || List.mem T.KWChar specifier_list
+        || List.mem T.KWVoid specifier_list
         || List.mem T.KWSigned specifier_list
            && List.mem T.KWUnsigned specifier_list
       then failwith "Invalid type specifier"
@@ -252,8 +255,8 @@ and parse_direct_declarator tokens =
 and parse_param_list tokens =
   expect T.OpenParen tokens;
   let params =
-    match peek tokens with
-    | T.KWVoid ->
+    match Stream.npeek 2 tokens with
+    | [ T.KWVoid; T.CloseParen ] ->
         Stream.junk tokens;
         []
     | _ -> param_loop tokens
@@ -272,7 +275,7 @@ and param_loop tokens =
 
 (* <param> ::= { <type-specifier> }+ <declarator> *)
 and parse_param tokens =
-  let specifiers = parse_type_specifer_list tokens in
+  let specifiers = parse_type_specifier_list tokens in
   let param_type = parse_type specifiers in
   let param_decl = parse_declarator tokens in
   Param (param_type, param_decl)
@@ -381,6 +384,20 @@ let rec process_abstract_declarator decl base_type =
       let derived_type = Types.Pointer base_type in
       process_abstract_declarator inner derived_type
 
+(* <type-name> ::= { <type-specifier> }+ [ <abstract-declarator> ] *)
+let parse_type_name tokens =
+  let type_specifiers = parse_type_specifier_list tokens in
+  let base_type = parse_type type_specifiers in
+  (* check for optional abstract declarator
+   * note that <type-name> is always followed by close paren,
+   * although that's not part of the grammar rule
+   *)
+  match peek tokens with
+  | T.CloseParen -> base_type
+  | _ ->
+      let abstract_decl = parse_abstract_declarator tokens in
+      process_abstract_declarator abstract_decl base_type
+
 (* <unop> ::= "-" | "~" *)
 let parse_unop tokens =
   match Stream.next tokens with
@@ -419,7 +436,10 @@ let rec parse_string_literals tokens =
       unescape s ^ parse_string_literals tokens
   | _ -> ""
 
-(* <factor> ::= <int> | <identifier> <unop> <factor> | "(" <exp> ")" *)
+(*
+   <primary-exp> ::= <const> | <identifier> | "(" <exp> ")" | { <string> }+
+                   | <identifier> "(" [ <argument-list> ] ")"
+*)
 let rec parse_primary_expression tokens =
   let next_token = peek tokens in
   match next_token with
@@ -446,6 +466,7 @@ let rec parse_primary_expression tokens =
       e
   | other -> raise_error ~expected:(Name "a primary expression") ~actual:other
 
+(* <postfix-exp> ::= <primary-exp> { "[" <exp> "]" } *)
 and parse_postfix_expression tokens =
   let primary = parse_primary_expression tokens in
   postfix_helper primary tokens
@@ -459,40 +480,55 @@ and postfix_helper primary tokens =
     postfix_helper subscript_exp tokens)
   else primary
 
-and parse_unary_expression tokens =
-  (* look ahead 2 tokens to distinguish between cast and parenthesized exp *)
+(* <cast-exp> ::= "(" <type-name> ")" <cast-exp>
+               | <unary-exp>
+*)
+and parse_cast_expression tokens =
   match Stream.npeek 2 tokens with
-  (* unary expressions *)
-  | T.Star :: _ ->
-      Stream.junk tokens;
-      let inner_exp = parse_unary_expression tokens in
-      Ast.Dereference inner_exp
-  | T.Ampersand :: _ ->
-      Stream.junk tokens;
-      let inner_exp = parse_unary_expression tokens in
-      AddrOf inner_exp
-  | (T.Hyphen | T.Tilde | T.Bang) :: _ ->
-      let operator = parse_unop tokens in
-      let inner_exp = parse_unary_expression tokens in
-      Unary (operator, inner_exp)
-  (* parenthesized expression *)
   | T.OpenParen :: t :: _ when is_type_specifier t ->
       (* this is a cast expression *)
       (* Stream.junk consumes open paren *)
       Stream.junk tokens;
-      let type_specifiers = parse_type_specifer_list tokens in
-      let base_type = parse_type type_specifiers in
-      (* check for optional abstract declarator *)
-      let target_type =
-        match peek tokens with
-        | T.CloseParen -> base_type
-        | _ ->
-            let abstract_decl = parse_abstract_declarator tokens in
-            process_abstract_declarator abstract_decl base_type
-      in
+      let target_type = parse_type_name tokens in
       expect T.CloseParen tokens;
+      let inner_exp = parse_cast_expression tokens in
+      Ast.Cast { target_type; e = inner_exp }
+  | _ -> parse_unary_expression tokens
+
+(*
+   <unary-exp> ::= <unop> <cast-exp>
+               | "sizeof" <unary-exp>
+               | "sizeof" "(" <type-name> ")"
+               | <postfix-exp>
+*)
+and parse_unary_expression tokens =
+  (* look ahead 2 tokens to distinguish between cast and parenthesized exp *)
+  match Stream.npeek 3 tokens with
+  (* unary expressions *)
+  | T.Star :: _ ->
+      Stream.junk tokens;
+      let inner_exp = parse_cast_expression tokens in
+      Ast.Dereference inner_exp
+  | T.Ampersand :: _ ->
+      Stream.junk tokens;
+      let inner_exp = parse_cast_expression tokens in
+      AddrOf inner_exp
+  | (T.Hyphen | T.Tilde | T.Bang) :: _ ->
+      let operator = parse_unop tokens in
+      let inner_exp = parse_cast_expression tokens in
+      Unary (operator, inner_exp)
+  | T.KWSizeOf :: T.OpenParen :: t :: _ when is_type_specifier t ->
+      (* this is the size of a type name *)
+      Stream.junk tokens;
+      Stream.junk tokens;
+      let target_type = parse_type_name tokens in
+      expect T.CloseParen tokens;
+      SizeOfT target_type
+  | T.KWSizeOf :: _ ->
+      (*size of an expression*)
+      Stream.junk tokens;
       let inner_exp = parse_unary_expression tokens in
-      Cast { target_type; e = inner_exp }
+      SizeOf inner_exp
   | _ -> parse_postfix_expression tokens
 
 (* "(" [ <argument-list> ] ")" ]*)
@@ -522,7 +558,7 @@ and parse_conditional_middle tokens =
 
 (* <exp> ::= <factor> | <exp> <binop> <exp> | <exp> "?" <exp> ":" <exp> *)
 and parse_expression min_prec tokens =
-  let initial_factor = parse_unary_expression tokens in
+  let initial_factor = parse_cast_expression tokens in
   let next_token = peek tokens in
   let rec parse_exp_loop left next =
     match get_precedence next with
@@ -613,8 +649,7 @@ let rec parse_statement tokens =
   | T.KWReturn ->
       (* consume return keyword *)
       let _ = Stream.junk tokens in
-      let exp = parse_expression 0 tokens in
-      let _ = expect T.Semicolon tokens in
+      let exp = parse_optional_expression T.Semicolon tokens in
       Return exp
   | _ -> (
       let opt_exp = parse_optional_expression T.Semicolon tokens in
