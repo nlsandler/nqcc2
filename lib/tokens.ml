@@ -9,10 +9,10 @@ type t =
   | Identifier of string
   | StringLiteral of string
   | ConstChar of string
-  | ConstInt of Big_int.big_int
-  | ConstLong of Big_int.big_int
-  | ConstUInt of Big_int.big_int
-  | ConstULong of Big_int.big_int
+  | ConstInt of (Big_int.big_int[@equal Big_int.eq_big_int])
+  | ConstLong of (Big_int.big_int[@equal Big_int.eq_big_int])
+  | ConstUInt of (Big_int.big_int[@equal Big_int.eq_big_int])
+  | ConstULong of (Big_int.big_int[@equal Big_int.eq_big_int])
   | ConstDouble of Cnums.Float.t
   (* Keywords *)
   | KWInt
@@ -33,6 +33,7 @@ type t =
   | KWStatic
   | KWExtern
   | KWSizeOf
+  | KWStruct
   (* punctuation *)
   | OpenParen
   | CloseParen
@@ -62,4 +63,6 @@ type t =
   | Ampersand
   | OpenBracket
   | CloseBracket
-[@@deriving show, ord]
+  | Dot
+  | Arrow
+[@@deriving show, eq, ord]
