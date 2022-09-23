@@ -38,6 +38,7 @@ let id_to_tok = function
   | "double" -> KWDouble
   | "char" -> KWChar
   | "sizeof" -> KWSizeOf
+  | "struct" -> KWStruct
   | other -> Identifier other
 
 let rec lex_helper chars =
@@ -59,6 +60,7 @@ let rec lex_helper chars =
   | ')' :: rest -> CloseParen :: lex_helper rest
   | ';' :: rest -> Semicolon :: lex_helper rest
   | '-' :: '-' :: rest -> DoubleHyphen :: lex_helper rest
+  | '-' :: '>' :: rest -> Arrow :: lex_helper rest
   | '-' :: rest -> Hyphen :: lex_helper rest
   | '~' :: rest -> Tilde :: lex_helper rest
   | '+' :: rest -> Plus :: lex_helper rest
@@ -73,6 +75,7 @@ let rec lex_helper chars =
   | ']' :: rest -> CloseBracket :: lex_helper rest
   | '\'' :: _ -> lex_character chars
   | '"' :: _ -> lex_string chars
+  | '.' :: (c :: _ as rest) when not (Char.is_digit c) -> Dot :: lex_helper rest
   | c :: rest when Char.is_whitespace c -> lex_helper rest
   | c :: _ when Char.is_digit c || c = '.' -> lex_constant chars
   | _ -> lex_identifier chars

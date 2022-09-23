@@ -83,13 +83,18 @@ let stage =
     let doc = "Run through code generation but stop before emitting assembly" in
     (Settings.Codegen, Arg.info [ "codegen" ] ~doc)
   in
+  let assembly =
+    let doc = "Stop before assembling (keep .s file)" in
+    (Settings.Assembly, Arg.info [ "s" ] ~doc)
+  in
   let obj =
     let doc = "Stop before invoking linker (keep .o file)" in
     (Settings.Obj, Arg.info [ "c" ] ~doc)
   in
   Arg.(
     value
-    & vflag Settings.Executable [ lex; parse; validate; tacky; obj; codegen ])
+    & vflag Settings.Executable
+        [ lex; parse; validate; tacky; assembly; obj; codegen ])
 
 let libs =
   let doc = "Link against library (passed through to assemble/link command" in

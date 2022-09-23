@@ -27,6 +27,8 @@
   tacky
   tacky_gen
   tokens
+  type_table
+  type_utils
   typecheck
   types
   type_utils

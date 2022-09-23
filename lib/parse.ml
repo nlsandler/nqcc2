@@ -81,7 +81,8 @@ let unescape s =
 (* getting a list of specifiers *)
 
 let is_type_specifier = function
-  | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble | KWChar | KWVoid ->
+  | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble | KWChar | KWVoid
+  | KWStruct ->
       true
   | _ -> false
 
@@ -89,15 +90,40 @@ let is_specifier = function
   | T.KWStatic | KWExtern -> true
   | other -> is_type_specifier other
 
+let parse_type_specifier tokens =
+  match peek tokens with
+  (* if the specifier is a struct kw, we actually care about the tag that follows it *)
+  | T.KWStruct -> (
+      Stream.junk tokens;
+      (* struct keyword must be followed by tag*)
+      match Stream.next tokens with
+      | T.Identifier _ as tag -> tag
+      | t -> raise_error ~expected:(Name "a structure tag") ~actual:t)
+  | t when is_type_specifier t ->
+      Stream.junk tokens;
+      t
+  | t ->
+      failwith
+        ("Internal error: called parse_type_specifier on non-type specifier \
+          token: "
+        ^ T.show t) [@coverage off]
+
+let parse_specifier tokens =
+  match peek tokens with
+  | (T.KWStatic | KWExtern) as spec ->
+      Stream.junk tokens;
+      spec
+  | _ -> parse_type_specifier tokens
+
 let rec parse_type_specifier_list tokens =
   if is_type_specifier (peek tokens) then
-    let spec = Stream.next tokens in
+    let spec = parse_type_specifier tokens in
     spec :: parse_type_specifier_list tokens
   else []
 
 let rec parse_specifier_list tokens =
   if is_specifier (peek tokens) then
-    let spec = Stream.next tokens in
+    let spec = parse_specifier tokens in
     spec :: parse_specifier_list tokens
   else []
 
@@ -110,7 +136,9 @@ let parse_type specifier_list =
   (* sort specifiers so we don't need to check for different
    * orderings of same specifiers *)
   let specifier_list = List.sort Tokens.compare specifier_list in
+  let is_ident = function T.Identifier _ -> true | _ -> false in
   match specifier_list with
+  | [ T.Identifier tag ] -> Types.Structure tag
   | [ T.KWVoid ] -> Types.Void
   | [ T.KWDouble ] -> Types.Double
   | [ T.KWChar ] -> Types.Char
@@ -119,10 +147,12 @@ let parse_type specifier_list =
   | _ ->
       if
         specifier_list = []
-        || List.unique specifier_list <> specifier_list
+        || List.length specifier_list
+           <> List.length (List.unique specifier_list)
         || List.mem T.KWDouble specifier_list
         || List.mem T.KWChar specifier_list
         || List.mem T.KWVoid specifier_list
+        || List.exists is_ident specifier_list
         || List.mem T.KWSigned specifier_list
            && List.mem T.KWUnsigned specifier_list
       then failwith "Invalid type specifier"
@@ -134,8 +164,10 @@ let parse_type specifier_list =
       else Types.Int
 
 let parse_type_and_storage_class specifier_list =
-  let types, storage_classes =
-    List.partition (fun tok -> is_type_specifier tok) specifier_list
+  let storage_classes, types =
+    List.partition
+      (fun tok -> tok = T.KWExtern || tok = KWStatic)
+      specifier_list
   in
   let typ = parse_type types in
   let storage_class =
@@ -184,10 +216,7 @@ let parse_constant tokens =
         | Some ui32 -> Const.ConstUInt ui32
         | None -> ConstULong (Big_int.uint64_of_big_int c))
     | T.ConstULong c -> ConstULong (Big_int.uint64_of_big_int c)
-    (* we only call this when we know the next token is a constant *)
-    | _ ->
-        raise (ParseError "Internal error when parsing constant")
-        [@coverage off]
+    | tok -> raise_error ~expected:(Name "a constant") ~actual:tok
   with Failure _ ->
     (* int64_of_big_int raises failure when value is out of bounds *)
     raise
@@ -466,19 +495,35 @@ let rec parse_primary_expression tokens =
       e
   | other -> raise_error ~expected:(Name "a primary expression") ~actual:other
 
-(* <postfix-exp> ::= <primary-exp> { "[" <exp> "]" } *)
+(* <postfix-exp> ::= <primary-exp> { <postfix-op> } *)
 and parse_postfix_expression tokens =
   let primary = parse_primary_expression tokens in
   postfix_helper primary tokens
 
+(*
+   <postfix-op> ::= "[" <exp> "]"
+                | "." <identifier>
+                | "->" <identifier>
+*)
 and postfix_helper primary tokens =
-  if peek tokens = T.OpenBracket then (
-    Stream.junk tokens;
-    let index = parse_expression 0 tokens in
-    expect T.CloseBracket tokens;
-    let subscript_exp = Ast.Subscript { ptr = primary; index } in
-    postfix_helper subscript_exp tokens)
-  else primary
+  match peek tokens with
+  | T.OpenBracket ->
+      Stream.junk tokens;
+      let index = parse_expression 0 tokens in
+      expect T.CloseBracket tokens;
+      let subscript_exp = Ast.Subscript { ptr = primary; index } in
+      postfix_helper subscript_exp tokens
+  | T.Dot ->
+      Stream.junk tokens;
+      let member = parse_id tokens in
+      let member_exp = Ast.Dot { strct = primary; member } in
+      postfix_helper member_exp tokens
+  | T.Arrow ->
+      Stream.junk tokens;
+      let member = parse_id tokens in
+      let arrow_exp = Ast.Arrow { strct = primary; member } in
+      postfix_helper arrow_exp tokens
+  | _ -> primary
 
 (* <cast-exp> ::= "(" <type-name> ")" <cast-exp>
                | <unary-exp>
@@ -751,35 +796,83 @@ and finish_parsing_variable_declaration var_type storage_class name tokens =
   | other ->
       raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
-(* <declaration> ::= <variable-declaration> | <function-declaration>
-   parse until declarator, then call appropriate function to finish parsing
-*)
+(* <declaration> ::= <variable-declaration> | <function-declaration> | <struct-declaration> *)
 and parse_declaration tokens =
-  let specifiers = parse_specifier_list tokens in
-  let base_typ, storage_class = parse_type_and_storage_class specifiers in
-  let declarator = parse_declarator tokens in
-  let name, typ, params = process_declarator declarator base_typ in
-  match typ with
-  | Types.FunType _ ->
-      FunDecl
-        (finish_parsing_function_declaration typ storage_class name params
-           tokens)
+  (* first figure out whether this is a struct declaraion *)
+  match Stream.npeek 3 tokens with
+  | [ T.KWStruct; Identifier _; (OpenBrace | Semicolon) ] ->
+      parse_structure_declaration tokens
+  | _ -> (
+      let specifiers = parse_specifier_list tokens in
+      let base_typ, storage_class = parse_type_and_storage_class specifiers in
+
+      (* parse until declarator, then call appropriate function to finish parsing *)
+      let declarator = parse_declarator tokens in
+      let name, typ, params = process_declarator declarator base_typ in
+      match typ with
+      | Types.FunType _ ->
+          FunDecl
+            (finish_parsing_function_declaration typ storage_class name params
+               tokens)
+      | _ ->
+          if params = [] then
+            VarDecl
+              (finish_parsing_variable_declaration typ storage_class name tokens)
+          else
+            failwith "Internal error: declarator has parameters but object type"
+            [@coverage off])
+
+(* <struct-declaration> ::= "struct" <identifier> [ "{" { <member-declaration> }+ "}" ] ";" *)
+and parse_structure_declaration tokens =
+  expect T.KWStruct tokens;
+  let tag = parse_id tokens in
+  let members =
+    match Stream.next tokens with
+    | T.Semicolon -> []
+    | T.OpenBrace ->
+        let members = parse_member_list tokens in
+        expect CloseBrace tokens;
+        expect T.Semicolon tokens;
+        members
+    | _ ->
+        failwith
+          "Internal error: shouldn't have called parse_structure_declaration \
+           here" [@coverage off]
+  in
+  StructDecl { tag; members }
+
+(* parse a non-empty member list *)
+and parse_member_list tokens =
+  let m = parse_member tokens in
+  match peek tokens with
+  | T.CloseBrace -> [ m ]
+  | _ -> m :: parse_member_list tokens
+
+(* <member-declaration> ::= { <type-specifier> }+ <declarator> ";" *)
+and parse_member tokens =
+  let specifiers = parse_type_specifier_list tokens in
+  let t = parse_type specifiers in
+  let member_decl = parse_declarator tokens in
+  match member_decl with
+  | FunDeclarator _ ->
+      raise (ParseError "found function declarator in struct member list")
   | _ ->
-      if params = [] then
-        VarDecl
-          (finish_parsing_variable_declaration typ storage_class name tokens)
-      else
-        failwith "Internal error: declarator has parameters but object type"
-        [@coverage off]
+      expect T.Semicolon tokens;
+      let member_name, member_type, _params =
+        process_declarator member_decl t
+      in
+
+      { member_name; member_type }
 
 (* helper function to accept variable declarations and reject function declarations *)
 and parse_variable_declaration tokens =
   match parse_declaration tokens with
   | VarDecl vd -> vd
-  | FunDecl _ ->
+  | FunDecl _ | StructDecl _ ->
       raise
         (ParseError
-           "Expected variable declaration but found function declaration")
+           "Expected variable declaration but found function or structure \
+            declaration")
 
 (* <for-init> ::= <declaration> | [ <exp> ] ";" *)
 and parse_for_init tokens =
