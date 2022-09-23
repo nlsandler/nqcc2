@@ -30,6 +30,7 @@ type t =
   | KWStatic
   | KWExtern
   | KWSizeOf
+  | KWStruct
   (* punctuation *)
   | OpenParen
   | CloseParen
@@ -59,4 +60,6 @@ type t =
   | Ampersand
   | OpenBracket
   | CloseBracket
-[@@deriving show, ord]
+  | Dot
+  | Arrow
+[@@deriving show, eq, ord]

@@ -87,6 +87,9 @@ module Private = struct
     let unescaped_list = unescape_next s in
     StringUtil.of_list unescaped_list
 
+  (* Check if a token is an identifier *)
+  let is_ident = function T.Identifier _ -> true | _ -> false
+
   (*** Parsing functions for grammar symbols ***)
 
   (* <identifier> ::= ? An identifier token ? *)
@@ -100,16 +103,25 @@ module Private = struct
   (* Helper function to check whether a token is a type specifier *)
   let is_type_specifier = function
     | T.KWInt | T.KWLong | T.KWUnsigned | T.KWSigned | T.KWDouble | T.KWChar
-    | T.KWVoid ->
+    | T.KWVoid | T.KWStruct ->
         true
     | _ -> false
 
   (* <type-specifier> ::= "int" | "long" | "unsigned" | "signed" | "double"
-   *                    | "char" | "void" *)
+   *                    | "char" | "void" | "struct" <identifier>
+   * When we encounter a struct type specifier, just return the tag
+   *)
   let parse_type_specifier tokens =
     let spec = Tok_stream.take_token tokens in
-    if is_type_specifier spec then spec
-    else raise_error ~expected:(Name "a type specifier") ~actual:spec
+    match spec with
+    | T.KWStruct ->
+        (* Make sure next token is the struct tag *)
+        let expected_tag = Tok_stream.take_token tokens in
+        if is_ident expected_tag then expected_tag
+        else raise_error ~expected:(Name "a structure tag") ~actual:expected_tag
+    | _ ->
+        if is_type_specifier spec then spec
+        else raise_error ~expected:(Name "a type specifier") ~actual:spec
 
   (* Helper to consume a list of type specifiers from start of token stream:
    * { <type-specifier> }+ *)
@@ -126,8 +138,13 @@ module Private = struct
 
   (* <specifier> ::= <type-specifier> | "static" | "extern" *)
   let parse_specifier tokens =
-    let spec = Tok_stream.take_token tokens in
-    if is_specifier spec then spec
+    let spec = Tok_stream.peek tokens in
+    (* Call parse_type_specifier if necessary to handle structure type
+       specifiers *)
+    if is_type_specifier spec then parse_type_specifier tokens
+    else if is_specifier spec then
+      let _ = Tok_stream.take_token tokens in
+      spec
     else
       raise_error ~expected:(Name "a type or storage-class specifier")
         ~actual:spec
@@ -153,6 +170,7 @@ module Private = struct
        same specifiers *)
     let specifier_list = List.sort Tokens.compare specifier_list in
     match specifier_list with
+    | [ T.Identifier tag ] -> Types.Structure tag
     | [ T.KWVoid ] -> Types.Void
     | [ T.KWDouble ] -> Types.Double
     | [ T.KWChar ] -> Types.Char
@@ -166,6 +184,7 @@ module Private = struct
           || List.mem T.KWDouble specifier_list
           || List.mem T.KWChar specifier_list
           || List.mem T.KWVoid specifier_list
+          || List.exists is_ident specifier_list
           || List.mem T.KWSigned specifier_list
              && List.mem T.KWUnsigned specifier_list
         then raise (ParseError "Invalid type specifier")
@@ -180,7 +199,7 @@ module Private = struct
   (* Convert list of specifiers to type and storage class (Listing 11-5) *)
   let parse_type_and_storage_class specifier_list =
     let types, storage_classes =
-      List.partition is_type_specifier specifier_list
+      List.partition (fun t -> is_type_specifier t || is_ident t) specifier_list
     in
     let typ = parse_type types in
     let storage_class =
@@ -451,19 +470,38 @@ module Private = struct
       arg :: parse_argument_list tokens
     else [ arg ]
 
-  (* <postfix-exp> ::= <primary-exp> { "[" <exp> "]" } *)
+  (* <postfix-exp> ::= <primary-exp> { <postfix-op> }
+   * <postfix-op> ::= "[" <exp> "]"
+                    | "." <identifier>
+                    | "->" <identifier>
+   *)
   and parse_postfix_exp tokens =
     let primary = parse_primary_exp tokens in
     (* Use postfix_loop to recursively consume subscript operators *)
     let rec postfix_loop e =
-      if Tok_stream.peek tokens = T.OpenBracket then
-        let _ = Tok_stream.take_token tokens in
-        let subscript = parse_exp 0 tokens in
-        let () = expect T.CloseBracket tokens in
-        let subscript_exp = Ast.Subscript { ptr = e; index = subscript } in
-        (* Consume next subscript operator if there is one *)
-        postfix_loop subscript_exp
-      else e
+      match Tok_stream.peek tokens with
+      (* "[" <exp> "]" *)
+      | T.OpenBracket ->
+          let _ = Tok_stream.take_token tokens in
+          let subscript = parse_exp 0 tokens in
+          let () = expect T.CloseBracket tokens in
+          let subscript_exp = Ast.Subscript { ptr = e; index = subscript } in
+          (* Consume next subscript operator if there is one *)
+          postfix_loop subscript_exp
+      (* "." <identifier> *)
+      | T.Dot ->
+          let _ = Tok_stream.take_token tokens in
+          let member = parse_id tokens in
+          let dot_exp = Ast.Dot { strct = e; member } in
+          postfix_loop dot_exp
+      (* "->" <identifier> *)
+      | T.Arrow ->
+          let _ = Tok_stream.take_token tokens in
+          let member = parse_id tokens in
+          let arrow_exp = Ast.Arrow { strct = e; member } in
+          postfix_loop arrow_exp
+      (* No postfix operator *)
+      | _ -> e
     in
     postfix_loop primary
 
@@ -711,14 +749,53 @@ module Private = struct
       let init_list = parse_init_loop () in
       let () = expect T.CloseBrace tokens in
       Ast.CompoundInit init_list
-    else Ast.SingleInit (parse_exp 0 tokens)
+    else (* Single expression*) Ast.SingleInit (parse_exp 0 tokens)
 
-  (* Single expression*)
+  (* <member-declaration> ::= { <type-specifier> }+ <declarator> ";" *)
+  let parse_member_declaration tokens =
+    let specifiers = parse_type_specifier_list tokens in
+    let base_type = parse_type specifiers in
+    let decl = parse_declarator tokens in
+    match decl with
+    | FunDeclarator _ ->
+        raise (ParseError "Found function declarator in struct member list")
+    | _ ->
+        expect T.Semicolon tokens;
+        let member_name, member_type, _params =
+          process_declarator decl base_type
+        in
+        Ast.{ member_name; member_type }
+
+  (*
+   * <struct-declaration> ::= "struct" <identifier> [ "{" { <member-declaration> }+ "}" ] ";"
+   *)
+  let parse_struct_declaration tokens =
+    expect T.KWStruct tokens;
+    let tag = parse_id tokens in
+    let members =
+      match Tok_stream.peek tokens with
+      (* There's a member list*)
+      | T.OpenBrace ->
+          let _ = Tok_stream.take_token tokens in
+          let rec parse_member_loop () =
+            let next_member = parse_member_declaration tokens in
+            if Tok_stream.peek tokens = T.CloseBrace then [ next_member ]
+            else next_member :: parse_member_loop ()
+          in
+          let members = parse_member_loop () in
+          expect T.CloseBrace tokens;
+          members
+      (* No member list *)
+      | _ -> []
+    in
+    expect T.Semicolon tokens;
+    Ast.{ tag; members }
+
   (* <function-declaration> ::= { <specifier> }+ <declarator> ( <block> | ";" )
    * <variable-declaration> ::= { <specifier> }+ <declarator> [ "=" <initializer> ] ";"
-   * Use a common function to parse both symbols (Listing 14-8).
+   * Use common logic to parse function adn variable declarations.
    *)
-  let rec parse_declaration tokens =
+  let rec parse_function_or_variable_declaration tokens =
     let specifiers = parse_specifier_list tokens in
     let base_type, storage_class = parse_type_and_storage_class specifiers in
     let decl = parse_declarator tokens in
@@ -745,6 +822,16 @@ module Private = struct
         expect T.Semicolon tokens;
         Ast.VarDecl { name; var_type = typ; storage_class; init }
 
+  (*
+   * <declaration> ::= <variable-declaration> | <function-declaration> | <struct-declaration>
+   *)
+  and parse_declaration tokens =
+    match Tok_stream.npeek 3 tokens with
+    (* It's a structure declaration *)
+    | [ T.KWStruct; T.Identifier _; (T.OpenBrace | T.Semicolon) ] ->
+        Ast.StructDecl (parse_struct_declaration tokens)
+    (* It's a function or variable declaration *)
+    | _ -> parse_function_or_variable_declaration tokens
   (*** Statements and blocks ***)
 
   (* <for-init> ::= <variable-declaration> | [ <exp> ] ";" *)

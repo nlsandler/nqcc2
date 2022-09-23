@@ -41,6 +41,8 @@ module UntypedExp = struct
     | Subscript of { ptr : exp; index : exp }
     | SizeOf of exp
     | SizeOfT of Types.t
+    | Dot of { strct : exp; member : string }
+    | Arrow of { strct : exp; member : string }
   [@@deriving show]
 
   type initializr = SingleInit of exp | CompoundInit of initializr list
@@ -66,6 +68,8 @@ module TypedExp = struct
     | Subscript of { ptr : exp; index : exp }
     | SizeOf of exp
     | SizeOfT of Types.t
+    | Dot of { strct : exp; member : string }
+    | Arrow of { strct : exp; member : string }
   [@@deriving show]
 
   and exp = { e : inner_exp; t : Types.t } [@@deriving show]
@@ -121,6 +125,12 @@ module BlockItems (Exp : EXP) = struct
      concrete module, not a functor argument. *)
   include StorageClass
 
+  type member_declaration = { member_name : string; member_type : Types.t }
+  [@@deriving show]
+
+  type struct_declaration = { tag : string; members : member_declaration list }
+  [@@deriving show]
+
   type variable_declaration = {
     name : string;
     var_type : Types.t;
@@ -170,6 +180,7 @@ module BlockItems (Exp : EXP) = struct
   and declaration =
     | FunDecl of function_declaration
     | VarDecl of variable_declaration
+    | StructDecl of struct_declaration
 
   type t = Program of declaration list [@@deriving show]
 end

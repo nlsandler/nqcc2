@@ -2,6 +2,11 @@ module ListUtil = struct
   let max cmp l = List.(hd (rev (sort cmp l)))
   let make_list len v = List.init len (fun _ -> v)
 
+  let rec take n = function
+    | [] -> []
+    | _ :: _ when n <= 0 -> []
+    | h :: t -> h :: take (n - 1) t
+
   let rec take_drop n = function
     | h :: t when n > 0 ->
         let l1, l2 = take_drop (n - 1) t in

@@ -26,6 +26,7 @@
   tacky_print
   tokens
   tok_stream
+  type_table
   typecheck
   types
   type_utils

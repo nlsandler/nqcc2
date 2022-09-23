@@ -24,7 +24,7 @@ let calculate_offset state name =
 let replace_operand state = function
   (* if it's a pseudoregister, replace it with a stack slot *)
   | Pseudo s -> (
-      if Assembly_symbols.is_static s then (state, Data s)
+      if Assembly_symbols.is_static s then (state, Data (s, 0))
       else
         match StringMap.find_opt s state.offset_map with
         (* We've already assigned this operand a stack slot *)
@@ -35,11 +35,7 @@ let replace_operand state = function
             let new_state, new_offset = calculate_offset state s in
             (new_state, Memory (BP, new_offset)))
   | PseudoMem (s, offset) when Assembly_symbols.is_static s ->
-      if offset = 0 then (state, Data s)
-      else
-        failwith
-          "Internal error: shouldn't have static variables with non-zero \
-           offset at this point" [@coverage off]
+      (state, Data (s, offset))
   | PseudoMem (s, offset) -> (
       match StringMap.find_opt s state.offset_map with
       (* We've already assigned this operand a stack slot *)
@@ -118,7 +114,13 @@ let replace_pseudos_in_instruction state = function
 
 let replace_pseudos_in_tl = function
   | Function { name; global; instructions } ->
-      let init_state = { current_offset = 0; offset_map = StringMap.empty } in
+      (* should we stick returns_on_stack in the AST or symbol table? *)
+      let starting_offset =
+        if Assembly_symbols.returns_on_stack name then -8 else 0
+      in
+      let init_state =
+        { current_offset = starting_offset; offset_map = StringMap.empty }
+      in
       let final_state, fixed_instructions =
         (* rewrite each instruction, tracking current offset/stack slot map as
            we go *)

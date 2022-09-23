@@ -10,7 +10,7 @@ type var_entry = {
 
 type struct_entry = { unique_tag : string; struct_from_current_scope : bool }
 
-let copy_identifier_map (m : var_entry StringMap.t) =
+let copy_identifier_map (m : var_entry String_map.t) =
   (* return a copy of the map with from_current_block set to false for every
 
      entry *)
@@ -19,7 +19,7 @@ let copy_identifier_map (m : var_entry StringMap.t) =
 let copy_struct_map m =
   (* return a copy of the map with from_current_block set to false for every
      entry *)
-  StringMap.map
+  String_map.map
     (fun entry -> { entry with struct_from_current_scope = false })
     m
 
@@ -27,7 +27,7 @@ let copy_struct_map m =
 let rec resolve_type struct_map = function
   | Structure tag -> (
       try
-        let unique_tag = (StringMap.find tag struct_map).unique_tag in
+        let unique_tag = (String_map.find tag struct_map).unique_tag in
         Structure unique_tag
       with Not_found -> failwith "specified undeclared structure type")
   | Pointer referenced_t -> Pointer (resolve_type struct_map referenced_t)
@@ -238,8 +238,8 @@ and resolve_params id_map =
   in
   List.fold_left_map fold_param id_map
 
-and resolve_function_declaration struct_map id_map fn =
-  match StringMap.find_opt fn.name id_map with
+and resolve_function_declaration id_map fn =
+  match String_map.find_opt fn.name id_map with
   | Some { from_current_scope = true; has_linkage = false; _ } ->
       failwith "Duplicate declaration"
   | _ ->
@@ -247,48 +247,14 @@ and resolve_function_declaration struct_map id_map fn =
       let new_entry =
         { unique_name = fn.name; from_current_scope = true; has_linkage = true }
       in
-      let new_id_map = StringMap.add fn.name new_entry id_map in
-      let inner_id_map = copy_identifier_map new_id_map in
-      let inner_id_map1, resolved_params =
-        resolve_params inner_id_map fn.params
-      in
-      let inner_struct_map = copy_struct_map struct_map in
-      let resolved_body =
-        Option.map (resolve_block inner_struct_map inner_id_map1) fn.body
-      in
-      ( new_id_map,
-        {
-          fn with
-          fun_type = resolved_type;
-          params = resolved_params;
-          body = resolved_body;
-        } )
+      let new_map = String_map.add fn.name new_entry id_map in
+      let inner_map = copy_identifier_map new_map in
+      let inner_map1, resolved_params = resolve_params inner_map fn.params in
+      let resolved_body = Option.map (resolve_block inner_map1) fn.body in
+      (new_map, { fn with params = resolved_params; body = resolved_body })
 
-and resolve_structure_declaration struct_map { tag; members } =
-  let prev_entry = StringMap.find_opt tag struct_map in
-  let new_map, resolved_tag =
-    match prev_entry with
-    | Some { unique_tag; struct_from_current_scope = true } ->
-        (* this refers to the same struc we've already declared, don't update
-           the map *)
-        (struct_map, unique_tag)
-    | _ ->
-        (* this declare a new type, generate a tag and update the map *)
-        let unique_tag = Unique_ids.make_named_temporary tag in
-        let entry = { unique_tag; struct_from_current_scope = true } in
-        (StringMap.add tag entry struct_map, unique_tag)
-  in
-  let resolve_member m =
-    (* note that we need to use new structure map here in case member type is
-       derived from this structure type *)
-    { m with member_type = resolve_type new_map m.member_type }
-  in
-  let resolved_members = List.map resolve_member members in
-  (new_map, { tag = resolved_tag; members = resolved_members })
-
-let resolve_file_scope_variable_declaration struct_map id_map
-    ({ name; var_type; _ } as vd : variable_declaration) =
-  let resolved_vd = { vd with var_type = resolve_type struct_map var_type } in
+let resolve_file_scope_variable_declaration id_map
+    ({ name; _ } as vd : variable_declaration) =
   let new_map =
     StringMap.add name
       { unique_name = name; from_current_scope = true; has_linkage = true }
@@ -313,8 +279,6 @@ let resolve_global_declaration (struct_map, id_map) = function
 
 let resolve (Program decls) =
   let _, resolved_decls =
-    List.fold_left_map resolve_global_declaration
-      (StringMap.empty, StringMap.empty)
-      decls
+    List.fold_left_map resolve_global_declaration String_map.empty decls
   in
   Program resolved_decls

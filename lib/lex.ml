@@ -54,6 +54,7 @@ let convert_identifier = function
   | "double" -> T.KWDouble
   | "char" -> T.KWChar
   | "sizeof" -> T.KWSizeOf
+  | "struct" -> T.KWStruct
   | other -> T.Identifier other
 
 let convert_int s = T.ConstInt (Z.of_string s)
@@ -144,6 +145,9 @@ let token_defs =
     def "&" (literal T.Ampersand);
     def {_|\[|_} (literal T.OpenBracket);
     def {_|\]|_} (literal T.CloseBracket);
+    def "->" (literal T.Arrow);
+    (* . operator must be followed by non-digit*)
+    def ~group:1 {|(\.)[^\d]|} (literal T.Dot);
   ]
 
 (** Check whether this string starts with this token; if so, return a match_def *)
