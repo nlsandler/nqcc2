@@ -28,6 +28,8 @@
   tacky_gen
   tacky_print
   tokens
+  type_table
+  type_utils
   typecheck
   types
   type_utils

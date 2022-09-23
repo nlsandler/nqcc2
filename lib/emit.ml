@@ -101,13 +101,14 @@ let show_operand t = function
   | Imm i -> Printf.sprintf "$%s" (Int64.to_string i)
   | Memory (r, 0) -> Printf.sprintf "(%s)" (show_quadword_reg r)
   | Memory (r, i) -> Printf.sprintf "%d(%s)" i (show_quadword_reg r)
-  | Data name ->
+  | Data (name, offset) ->
       let lbl =
         if Assembly_symbols.is_constant name then show_local_label name
         else show_label name
       in
 
-      Printf.sprintf "%s(%%rip)" lbl
+      if offset = 0 then Printf.sprintf "%s(%%rip)" lbl
+      else Printf.sprintf "%s+%d(%%rip)" lbl offset
   | Indexed { base; index; scale } ->
       Printf.sprintf "(%s, %s, %d)" (show_quadword_reg base)
         (show_quadword_reg index) scale
@@ -132,6 +133,8 @@ let show_binary_instruction = function
   | DivDouble -> "div"
   | And -> "and"
   | Or -> "or"
+  | Shl -> "shl"
+  | ShrBinop -> "shr"
   | Xor ->
       failwith "Internal error, should handle xor as special case"
       [@coverage off]

@@ -26,12 +26,23 @@ type operand =
   | Reg of reg
   | Pseudo of string
   | Memory of reg * int
-  | Data of string
+  | Data of string * int
   | PseudoMem of string * int
   | Indexed of { base : reg; index : reg; scale : int }
 
 type unary_operator = Neg | Not | Shr
-type binary_operator = Add | Sub | Mult | DivDouble | And | Or | Xor
+
+type binary_operator =
+  | Add
+  | Sub
+  | Mult
+  | DivDouble
+  | And
+  | Or
+  | Xor
+  | Shl
+  | ShrBinop
+
 type cond_code = E | NE | G | GE | L | LE | A | AE | B | BE
 
 type asm_type =

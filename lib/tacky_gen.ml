@@ -24,6 +24,31 @@ let get_ptr_scale = function
         ("Internal error: tried to get scale of non-pointer type: "
         ^ Types.show t) [@coverage off]
 
+let get_member_offset member = function
+  | Types.Structure tag -> (
+      try[@coverage off]
+        String_map.(find member Type_table.(find tag).members).offset
+      with Not_found ->
+        failwith
+          ("Internal error: failed to find member "
+          ^ member
+          ^ " in structure "
+          ^ tag))
+  | t ->
+      failwith
+        ("Internal error: tried to get offset of member "
+        ^ member
+        ^ " within non-structure type "
+        ^ Types.show t) [@coverage off]
+
+let get_member_pointer_offset member = function
+  | Types.Pointer t -> get_member_offset member t
+  | t ->
+      failwith
+        ("Internal error: trying to get member through pointer but "
+        ^ Types.show t
+        ^ " is not a pointer type") [@coverage off]
+
 let convert_op = function
   | Ast.Complement -> T.Complement
   | Ast.Negate -> T.Negate
@@ -53,6 +78,7 @@ let eval_size t =
 type exp_result =
   | PlainOperand of T.tacky_val
   | DereferencedPointer of T.tacky_val
+  | SubObject of string * int
 
 (* return list of instructions to evaluate expression and resulting exp_result value as a pair *)
 let rec emit_tacky_for_exp Ast.{ e; t } =
@@ -84,6 +110,8 @@ let rec emit_tacky_for_exp Ast.{ e; t } =
   | Ast.Subscript { ptr; index } -> emit_subscript t ptr index
   | Ast.SizeOfT t -> ([], PlainOperand (eval_size t))
   | Ast.SizeOf inner -> ([], PlainOperand (eval_size inner.t))
+  | Dot { strct; member } -> emit_dot_operator t strct member
+  | Arrow { strct; member } -> emit_arrow_operator t strct member
 
 (* helper functions for individual expression *)
 and emit_unary_expression t op inner =
@@ -243,6 +271,9 @@ and emit_assignment lhs rhs =
   | DereferencedPointer ptr ->
       ( instructions @ [ T.Store { src = rval; dst_ptr = ptr } ],
         PlainOperand rval )
+  | SubObject (base, offset) ->
+      ( instructions @ [ CopyToOffset { src = rval; offset; dst = base } ],
+        PlainOperand rval )
 
 and emit_conditional_expression t condition e1 e2 =
   let eval_cond, c = emit_tacky_and_convert condition in
@@ -291,6 +322,34 @@ and emit_dereference inner =
   let instructions, result = emit_tacky_and_convert inner in
   (instructions, DereferencedPointer result)
 
+and emit_dot_operator t strct member =
+  let member_offset = get_member_offset member strct.t in
+  let instructions, inner_object = emit_tacky_for_exp strct in
+  match inner_object with
+  | PlainOperand (Var v) -> (instructions, SubObject (v, member_offset))
+  | SubObject (base, offset) ->
+      (instructions, SubObject (base, offset + member_offset))
+  | DereferencedPointer ptr ->
+      if member_offset = 0 then (instructions, DereferencedPointer ptr)
+      else
+        let dst = T.Var (create_tmp (Pointer t)) in
+        let index = T.Constant (ConstLong (Int64.of_int member_offset)) in
+        let add_ptr_instr = T.AddPtr { ptr; index; scale = 1; dst } in
+        (instructions @ [ add_ptr_instr ], DereferencedPointer dst)
+  | PlainOperand (Constant _) ->
+      failwith "Internal error: found dot operator applied to constant"
+      [@coverage off]
+
+and emit_arrow_operator t strct member =
+  let member_offset = get_member_pointer_offset member strct.t in
+  let instructions, ptr = emit_tacky_and_convert strct in
+  if member_offset = 0 then (instructions, DereferencedPointer ptr)
+  else
+    let dst = T.Var (create_tmp (Pointer t)) in
+    let index = T.Constant (ConstLong (Int64.of_int member_offset)) in
+    let add_ptr_instr = T.AddPtr { ptr; index; scale = 1; dst } in
+    (instructions @ [ add_ptr_instr ], DereferencedPointer dst)
+
 and emit_addr_of t inner =
   let instructions, result = emit_tacky_for_exp inner in
   match result with
@@ -298,6 +357,17 @@ and emit_addr_of t inner =
       let dst = T.Var (create_tmp t) in
       (instructions @ [ T.GetAddress { src = o; dst } ], PlainOperand dst)
   | DereferencedPointer ptr -> (instructions, PlainOperand ptr)
+  | SubObject (base, offset) ->
+      let dst = T.Var (create_tmp t) in
+      let get_addr = T.GetAddress { src = Var base; dst } in
+      if offset = 0 then
+        (* skip AddPtr if offset is 0 *)
+        (instructions @ [ get_addr ], PlainOperand dst)
+      else
+        let index = T.Constant (ConstLong (Int64.of_int offset)) in
+        ( instructions
+          @ [ get_addr; AddPtr { ptr = dst; index; scale = 1; dst } ],
+          PlainOperand dst )
 
 and emit_tacky_and_convert e =
   let instructions, result = emit_tacky_for_exp e in
@@ -306,6 +376,9 @@ and emit_tacky_and_convert e =
   | DereferencedPointer ptr ->
       let dst = T.Var (create_tmp e.t) in
       (instructions @ [ T.Load { src_ptr = ptr; dst } ], dst)
+  | SubObject (base, offset) ->
+      let dst = T.Var (create_tmp e.t) in
+      (instructions @ [ T.CopyFromOffset { src = base; offset; dst } ], dst)
 
 let rec emit_string_init dst offset s =
   let len = Bytes.length s in
@@ -346,6 +419,13 @@ let rec emit_compound_init name offset = function
         emit_compound_init name new_offset elem_init
       in
       List.flatten (List.mapi handle_init inits)
+  | Ast.CompoundInit (Structure tag, inits) ->
+      let members = Type_table.get_members tag in
+      let process_init memb init =
+        let mem_offset = offset + Type_table.(memb.offset) in
+        emit_compound_init name mem_offset init
+      in
+      List.flatten (List.map2 process_init members inits)
   | Ast.CompoundInit (_, _) ->
       failwith "Internal error: compound init has non-array type!"
       [@coverage off]
@@ -384,6 +464,7 @@ and emit_local_declaration = function
   | Ast.VarDecl { storage_class = Some _; _ } -> []
   | Ast.VarDecl vd -> emit_var_declaration vd
   | Ast.FunDecl _ -> []
+  | Ast.StructDecl _ -> []
 
 and emit_var_declaration = function
   | {

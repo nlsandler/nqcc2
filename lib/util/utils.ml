@@ -1,3 +1,12 @@
+let rec take n = function
+  | [] -> []
+  | _ :: _ when n <= 0 -> []
+  | h :: t -> h :: take (n - 1) t
+
+let%test "take_zero" = take 0 [ 1; 2; 3; 4; 5 ] = []
+let%test "take_all" = take 10 [ 1; 2; 3; 4; 5 ] = [ 1; 2; 3; 4; 5 ]
+let%test "take_some" = take 3 [ 1; 2; 3; 4; 5 ] = [ 1; 2; 3 ]
+
 let rec take_drop n = function
   | h :: t when n > 0 ->
       let l1, l2 = take_drop (n - 1) t in

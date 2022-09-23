@@ -37,6 +37,7 @@ let id_to_tok = function
   | "double" -> KWDouble
   | "char" -> KWChar
   | "sizeof" -> KWSizeOf
+  | "struct" -> KWStruct
   | other -> Identifier other
 
 let rec lex_helper chars =
@@ -60,6 +61,7 @@ let rec lex_helper chars =
     | ')' :: _ -> CloseParen :: lex_helper (String_utils.drop_first chars)
     | ';' :: _ -> Semicolon :: lex_helper (String_utils.drop_first chars)
     | [ '-'; '-' ] -> DoubleHyphen :: lex_helper (String_utils.drop 2 chars)
+    | '-' :: '>' :: _ -> Arrow :: lex_helper (String_utils.drop 2 chars)
     | '-' :: _ -> Hyphen :: lex_helper (String_utils.drop_first chars)
     | '~' :: _ -> Tilde :: lex_helper (String_utils.drop_first chars)
     | '+' :: _ -> Plus :: lex_helper (String_utils.drop_first chars)
@@ -74,6 +76,8 @@ let rec lex_helper chars =
     | ']' :: _ -> CloseBracket :: lex_helper (String_utils.drop_first chars)
     | '\'' :: _ -> lex_character chars
     | '"' :: _ -> lex_string chars
+    | '.' :: c :: _ when not (String_utils.is_digit c) ->
+        Dot :: lex_helper (String_utils.drop_first chars)
     | c :: _ when String_utils.is_whitespace c ->
         lex_helper (String_utils.drop_first chars)
     | c :: _ when String_utils.is_digit c || c = '.' -> lex_constant chars
