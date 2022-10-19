@@ -1,1 +1,2 @@
-val compile : Settings.target -> Settings.stage -> string -> unit
+val compile :
+  Settings.target -> Settings.stage -> Settings.optimizations -> string -> unit

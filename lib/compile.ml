@@ -1,6 +1,6 @@
 open Batteries
 
-let compile target stage src_file =
+let compile target stage optimizations src_file =
   let _ = Settings.platform := target in
   (* read in the file - TODO use streams? *)
   let source_lines = File.lines_of src_file in
@@ -26,11 +26,13 @@ let compile target stage src_file =
       else
         (* Convert the AST to TACKY *)
         let tacky = Tacky_gen.gen typed_ast in
+        (* optimize it! *)
+        let optimized_tacky = Optimize.optimize optimizations tacky in
         if stage = Settings.Tacky then ()
         else
           (* Assembly generation has three steps:
            * 1. convert TACKY to assembly *)
-          let asm_ast = Codegen.gen tacky in
+          let asm_ast = Codegen.gen optimized_tacky in
           (* replace pseudoregisters with Stack operands *)
           let asm_ast1 = Replace_pseudos.replace_pseudos asm_ast in
           (* fix up instructions *)

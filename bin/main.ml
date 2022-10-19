@@ -30,8 +30,8 @@ let preprocess src =
   let _ = run_command preprocess_cmd in
   output
 
-let compile target stage preprocessed_src =
-  let _ = Compile.compile target stage preprocessed_src in
+let compile target stage optimizations preprocessed_src =
+  let _ = Compile.compile target stage optimizations preprocessed_src in
   (* remove preprocessed src *)
   let cleanup_preprocessed = Printf.sprintf "rm %s" preprocessed_src in
   run_command cleanup_preprocessed;
@@ -53,9 +53,9 @@ let assemble_and_link ?(link = true) ?(libs = []) src =
   let cleanup_cmd = Printf.sprintf "rm %s" assembly_file in
   run_command cleanup_cmd
 
-let driver target libs stage src =
+let driver target libs stage optimizations src =
   let preprocessed_name = preprocess src in
-  let assembly_name = compile target stage preprocessed_name in
+  let assembly_name = compile target stage optimizations preprocessed_name in
   match stage with
   | Settings.Executable -> assemble_and_link ~link:true ~libs assembly_name
   | Settings.Obj -> assemble_and_link ~link:false assembly_name
@@ -85,7 +85,7 @@ let stage =
   in
   let assembly =
     let doc = "Stop before assembling (keep .s file)" in
-    (Settings.Assembly, Arg.info [ "s" ] ~doc)
+    (Settings.Assembly, Arg.info [ "s"; "S" ] ~doc)
   in
   let obj =
     let doc = "Stop before invoking linker (keep .o file)" in
@@ -108,10 +108,62 @@ let target =
 let src_file =
   Arg.(required & pos 0 (some non_dir_file) None & info [] ~docv:"files")
 
+(* optimization options *)
+let optimization_options =
+  let fold_constants =
+    let doc = "Enable constant folding" in
+    Arg.(value & flag & info [ "fold-constants" ] ~doc)
+  in
+  let eliminate_dead_stores =
+    let doc = "Enable dead store elimination" in
+    Arg.(value & flag & info [ "eliminate-dead-stores" ] ~doc)
+  in
+  let propagate_copies =
+    let doc = "Enable copy-propagation" in
+    Arg.(value & flag & info [ "propagate-copies" ] ~doc)
+  in
+  let eliminate_unreachable_code =
+    let doc = "Enable unreachable code eliminaiton" in
+    Arg.(value & flag & info [ "eliminate-unreachable-code" ] ~doc)
+  in
+  let optimize =
+    let doc = "enable optimizations" in
+    Arg.(value & flag & info [ "o"; "optimize" ] ~doc)
+  in
+  let set_options optimize constant_folding dead_store_elimination
+      copy_propagation unreachable_code_elimination =
+    if optimize then
+      (* TODO maybe warn if both --optimize and any of the other options are set, since those options will be redundant? *)
+      Settings.
+        {
+          constant_folding = true;
+          dead_store_elimination = true;
+          unreachable_code_elimination = true;
+          copy_propagation = true;
+        }
+    else
+      Settings.
+        {
+          constant_folding;
+          dead_store_elimination;
+          copy_propagation;
+          unreachable_code_elimination;
+        }
+  in
+  Cmdliner.Term.(
+    const set_options
+    $ optimize
+    $ fold_constants
+    $ eliminate_dead_stores
+    $ propagate_copies
+    $ eliminate_unreachable_code)
+
 let cmd =
   let doc = "A not-quite-C compiler" in
   let info = Cmd.info "nqcc" ~doc in
-  Cmd.v info Term.(const driver $ target $ libs $ stage $ src_file)
+  Cmd.v info
+    Term.(
+      const driver $ target $ libs $ stage $ optimization_options $ src_file)
 
 let main () = exit (Cmd.eval cmd)
 let () = main ()

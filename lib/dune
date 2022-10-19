@@ -4,22 +4,29 @@
  (name nqcc)
  (inline_tests)
  (modules
+  address_taken
   ast
   assembly
   assembly_symbols
+  cfg
   cnums
   codegen
   compile
   const
   const_convert
+  constant_folding
+  copy_prop
+  dead_store_elim
   emit
   extended_big_int
+  optimize_utils
   identifier_resolution
   initializers
   instruction_fixup
   label_loops
   lex
   num_interfaces
+  optimize
   parse
   replace_pseudos
   rounding
@@ -33,7 +40,8 @@
   types
   type_utils
   settings
-  unique_ids)
+  unique_ids
+  unreachable_code_elim)
  (libraries batteries ppx_deriving ppx_inline_test camlp-streams bisect_ppx)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq ppx_deriving.ord ppx_inline_test))
