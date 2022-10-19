@@ -1,1 +1,1 @@
-val compile : Settings.stage -> string -> unit
+val compile : Settings.stage -> Settings.optimizations -> string -> unit

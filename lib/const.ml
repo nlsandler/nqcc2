@@ -10,6 +10,7 @@ type t =
   | ConstUInt of UInt32.t
   | ConstULong of UInt64.t
   | ConstDouble of Float.t
+[@@deriving eq, ord]
 
 (* print functions for debugging *)
 let show = function
@@ -36,3 +37,12 @@ let type_of_const = function
   | ConstUInt _ -> Types.UInt
   | ConstULong _ -> Types.ULong
   | ConstDouble _ -> Types.Double
+
+let to_int = function
+  | ConstChar c -> Int8.to_int c
+  | ConstUChar c -> UInt8.to_int c
+  | ConstInt i -> Int32.to_int i
+  | ConstLong l -> Int64.to_int l
+  | ConstUInt u -> UInt32.to_int u
+  | ConstULong ul -> UInt64.to_int ul
+  | ConstDouble d -> Float.to_int d
