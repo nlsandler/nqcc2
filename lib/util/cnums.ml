@@ -5,19 +5,36 @@ module Float = struct
 
   [@@@coverage off]
 
-  type t = float [@@deriving show]
+  type t = float [@@deriving show, eq]
 
   [@@@coverage on]
+end
+
+module MakeCompare (C : sig
+  type t
+
+  val compare : t -> t -> int
+end) : Compare with type t = C.t = struct
+  type t = C.t
+
+  let ( = ) x y = C.compare x y = 0
+  let ( <> ) x y = C.compare x y <> 0
+  let ( > ) x y = C.compare x y > 0
+  let ( >= ) x y = C.compare x y >= 0
+  let ( < ) x y = C.compare x y < 0
+  let ( <= ) x y = C.compare x y <= 0
 end
 
 module Int8 : NumLike = struct
   [@@@coverage off]
 
-  type t = int32 [@@deriving show]
+  type t = int32 [@@deriving show, eq, ord]
 
   [@@@coverage on]
 
   let zero = Int32.zero
+  let lognot = Int32.lognot
+  let rem = Int32.rem
 
   (* internal function to sign-or-zero-extend into upper bytes *)
   let reset_upper_bytes x =
@@ -29,6 +46,23 @@ module Int8 : NumLike = struct
       (* result is negative, set upper bits to 1*)
       let bitmask = 0xffffff00l in
       Int32.logor x bitmask
+
+  let neg x = reset_upper_bytes (Int32.neg x)
+
+  module Infix = struct
+    let ( + ) x y = reset_upper_bytes Int32.(add x y)
+    let ( - ) x y = reset_upper_bytes Int32.(sub x y)
+
+    (* don't need to explicitly wrap division; if x and y are in range of int8, result will be too *)
+    let ( / ) = Int32.div
+    let ( * ) x y = reset_upper_bytes Int32.(mul x y)
+  end
+
+  module Compare = MakeCompare (struct
+    type t = int32
+
+    let compare = Int32.compare
+  end)
 
   let check_range x =
     if x > 127l || x < -128l then failwith "Out of range" else x
@@ -58,16 +92,34 @@ end
 module UInt8 : NumLike = struct
   [@@@coverage off]
 
-  type t = int32 [@@deriving show]
+  type t = int32 [@@deriving show, eq]
 
   [@@@coverage on]
 
   let zero = Int32.zero
+  let lognot = Int32.lognot
+  let compare = Int32.unsigned_compare
+  let rem = Int32.unsigned_rem
 
   (* internal function to sign-or-zero-extend into upper bytes *)
   let reset_upper_bytes x =
     let bitmask = 0x000000ffl in
     Int32.logand x bitmask
+
+  let neg x = reset_upper_bytes (Int32.neg x)
+
+  module Infix = struct
+    let ( + ) x y = reset_upper_bytes Int32.(add x y)
+    let ( - ) x y = reset_upper_bytes Int32.(sub x y)
+    let ( / ) x y = Int32.unsigned_div x y
+    let ( * ) x y = reset_upper_bytes Int32.(mul x y)
+  end
+
+  module Compare = MakeCompare (struct
+    type t = int32
+
+    let compare = Int32.unsigned_compare
+  end)
 
   let of_int i =
     let x = Int32.of_int i in
@@ -93,11 +145,29 @@ end
 module UInt32 : NumLike = struct
   [@@@coverage off]
 
-  type t = int32 [@@deriving show]
+  type t = int32 [@@deriving show, eq]
 
   [@@@coverage on]
 
   let zero = Int32.zero
+  let compare = Int32.unsigned_compare
+  let rem = Int32.unsigned_rem
+  let neg = Int32.neg
+  let lognot = Int32.lognot
+
+  module Infix = struct
+    let ( + ) x y = Int32.(add x y)
+    let ( - ) x y = Int32.(sub x y)
+    let ( / ) = Int32.unsigned_div
+    let ( * ) x y = Int32.(mul x y)
+  end
+
+  module Compare = MakeCompare (struct
+    type t = int32
+
+    let compare = Int32.unsigned_compare
+  end)
+
   let of_int = Int32.of_int
 
   let to_int x =
@@ -132,11 +202,29 @@ let%test "uint_type_conversion" =
 module UInt64 : NumLike = struct
   [@@@coverage off]
 
-  type t = int64 [@@deriving show]
+  type t = int64 [@@deriving show, eq]
 
   [@@@coverage on]
 
   let zero = Int64.zero
+  let compare = Int64.unsigned_compare
+  let neg = Int64.neg
+  let lognot = Int64.lognot
+  let rem = Int64.unsigned_rem
+
+  module Infix = struct
+    let ( + ) x y = Int64.(add x y)
+    let ( - ) x y = Int64.(sub x y)
+    let ( / ) = Int64.unsigned_div
+    let ( * ) x y = Int64.(mul x y)
+  end
+
+  module Compare = MakeCompare (struct
+    type t = int64
+
+    let compare = Int64.unsigned_compare
+  end)
+
   let of_int = Int64.of_int
 
   let to_int x =

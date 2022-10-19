@@ -3,21 +3,28 @@
 (library
  (name nqcc)
  (modules
+  address_taken
   ast
   assembly
   assembly_symbols
+  cfg
   cnums
   codegen
   compile
   const
   const_convert
+  constant_folding
+  copy_prop
+  dead_store_elim
   emit
+  optimize_utils
   identifier_resolution
   initializers
   instruction_fixup
   label_loops
   lex
   num_interfaces
+  optimize
   parse
   replace_pseudos
   rounding
@@ -35,6 +42,7 @@
   type_utils
   settings
   unique_ids
+  unreachable_code_elim
   utils)
  (libraries ppx_deriving ppx_inline_test str camlp-streams bisect_ppx zarith)
  (inline_tests)

@@ -1,3 +1,5 @@
+let last l = List.hd (List.rev l)
+
 let rec take n = function
   | [] -> []
   | _ :: _ when n <= 0 -> []
