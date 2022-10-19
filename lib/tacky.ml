@@ -1,6 +1,8 @@
 [@@@coverage exclude_file]
 
-type unary_operator = Complement | Negate | Not [@@deriving show]
+open Cnums
+
+type unary_operator = Complement | Negate | Not [@@deriving show, eq, ord]
 
 type binary_operator =
   | Add
@@ -19,12 +21,38 @@ type binary_operator =
   | LessOrEqual
   | GreaterThan
   | GreaterOrEqual
-[@@deriving show]
+[@@deriving show, eq, ord]
 
-type tacky_val = Constant of Const.t | Var of string
+(* we need a custom comparison function for constants to make sure that 0.0 and -0.0 don't compare equal *)
+let const_compare a b =
+  match (a, b) with
+  | Const.ConstDouble d1, Const.ConstDouble d2
+    when Float.is_nan d1 && Float.is_nan d2 ->
+      (* For these purposes, nans should compare equal *)
+      0
+  | Const.ConstDouble d1, Const.ConstDouble d2 when d1 = d2 ->
+      Float.compare (Float.copysign 1. d1) (Float.copysign 1. d2)
+  | _ -> Const.compare a b
+
+type tacky_val =
+  | Constant of
+      (Const.t
+      [@compare fun a b -> const_compare a b]
+      [@equal fun a b -> const_compare a b = 0])
+  | Var of string
+[@@deriving eq, ord]
 
 let show_tacky_val = function Constant c -> Const.show c | Var v -> v
 let pp_tacky_val fmt v = Format.pp_print_string fmt (show_tacky_val v)
+
+(* TODO maybe this should be in a separate module? *)
+let type_of_val = function
+  (* note: this reports the type of ConstChar as SChar instead of Char, doesn't matter in this context *)
+  | Constant c -> Const.type_of_const c
+  | Var v -> (
+      try (Symbols.get v).t
+      with Not_found ->
+        failwith ("Internal error: " ^ v ^ " not in symbol table"))
 
 type instruction =
   | Return of tacky_val option
@@ -59,7 +87,7 @@ type instruction =
   | JumpIfNotZero of tacky_val * string
   | Label of string
   | FunCall of { f : string; args : tacky_val list; dst : tacky_val option }
-[@@deriving show { with_path = false }]
+[@@deriving show { with_path = false }, eq, ord]
 
 type top_level =
   | Function of {

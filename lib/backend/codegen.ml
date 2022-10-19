@@ -109,15 +109,7 @@ let convert_type = function
         ("Internal error, converting type to assembly: " ^ Types.show t)
       [@coverage off]
 
-let tacky_type = function
-  (* note: this reports the type of ConstChar as SChar instead of Char, doesn't matter in this context *)
-  | Tacky.Constant c -> Const.type_of_const c
-  | Tacky.Var v -> (
-      try (Symbols.get v).t
-      with Not_found ->
-        failwith ("Internal error: " ^ v ^ " not in symbol table"))
-
-let asm_type = convert_type % tacky_type
+let asm_type = convert_type % Tacky.type_of_val
 
 let convert_unop = function
   | Tacky.Complement -> Assembly.Not
@@ -268,7 +260,7 @@ let classify_type tag =
       classes
 
 let classify_tacky_val v =
-  match tacky_type v with
+  match Tacky.type_of_val v with
   | Structure tag -> classify_type tag
   | Union tag -> classify_type tag
   | _ ->
@@ -298,7 +290,7 @@ let classify_parameters tacky_vals return_on_stack =
           | Constant _ ->
               failwith "Internal error: constant byte array" [@coverage off]
         in
-        let var_size = Type_utils.get_size (tacky_type v) in
+        let var_size = Type_utils.get_size (Tacky.type_of_val v) in
         let classes = classify_tacky_val v in
         let updated_int, updated_dbl, use_stack =
           if List.hd classes = Mem then
@@ -355,7 +347,7 @@ let classify_parameters tacky_vals return_on_stack =
 
 let classify_return_value retval =
   let open Assembly in
-  let retval_type = tacky_type retval in
+  let retval_type = Tacky.type_of_val retval in
   let classify_return_val_helper tag =
     let classes = classify_type tag in
     let var_name =
@@ -512,7 +504,7 @@ let convert_return_instruction = function
   | Some v ->
       let int_retvals, dbl_retvals, return_on_stack = classify_return_value v in
       if return_on_stack then
-        let byte_count = Type_utils.get_size (tacky_type v) in
+        let byte_count = Type_utils.get_size (Tacky.type_of_val v) in
         let get_ptr = Assembly.Mov (Quadword, Memory (BP, -8), Reg AX) in
         let copy_into_ptr =
           copy_bytes (convert_val v) (Assembly.Memory (AX, 0)) ~byte_count
@@ -540,7 +532,7 @@ let convert_return_instruction = function
         return_ints @ return_dbls @ [ Ret ]
 
 let convert_instruction = function
-  | Tacky.Copy { src; dst } when Type_utils.is_scalar (tacky_type src) ->
+  | Tacky.Copy { src; dst } when Type_utils.is_scalar (Tacky.type_of_val src) ->
       let t = asm_type src in
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
@@ -548,7 +540,7 @@ let convert_instruction = function
   | Tacky.Copy { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      let byte_count = Type_utils.get_size (tacky_type src) in
+      let byte_count = Type_utils.get_size (Tacky.type_of_val src) in
       copy_bytes asm_src asm_dst ~byte_count
   | Tacky.Return maybe_val -> convert_return_instruction maybe_val
   | Tacky.Unary { op = Not; src; dst } ->
@@ -571,7 +563,7 @@ let convert_instruction = function
           Mov (dst_t, zero, asm_dst);
           SetCC (E, asm_dst);
         ]
-  | Tacky.Unary { op = Negate; src; dst } when tacky_type src = Double ->
+  | Tacky.Unary { op = Negate; src; dst } when Tacky.type_of_val src = Double ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
       let negative_zero = add_constant ~alignment:16 (-0.0) in
@@ -602,7 +594,7 @@ let convert_instruction = function
           else
             let signed =
               if src_t = Double then false
-              else Type_utils.is_signed (tacky_type src1)
+              else Type_utils.is_signed (Tacky.type_of_val src1)
             in
             let cond_code = convert_cond_code signed op in
             [
@@ -613,7 +605,7 @@ let convert_instruction = function
       (* Division/modulo *)
       | (Divide | Mod) when src_t <> Double ->
           let result_reg = if op = Divide then Assembly.AX else DX in
-          if Type_utils.is_signed (tacky_type src1) then
+          if Type_utils.is_signed (Tacky.type_of_val src1) then
             [
               Mov (src_t, asm_src1, Reg AX);
               Cdq src_t;
@@ -628,7 +620,7 @@ let convert_instruction = function
               Mov (src_t, Reg result_reg, asm_dst);
             ]
       | BitshiftLeft | BitshiftRight -> (
-          let is_signed = Type_utils.is_signed (tacky_type src1) in
+          let is_signed = Type_utils.is_signed (Tacky.type_of_val src1) in
           let asm_op = convert_shift_op is_signed op in
           let asm_t = asm_type src1 in
           match asm_src2 with
@@ -651,7 +643,8 @@ let convert_instruction = function
             Mov (src_t, asm_src1, asm_dst);
             Binary { op = asm_op; t = src_t; src = asm_src2; dst = asm_dst };
           ])
-  | Tacky.Load { src_ptr; dst } when Type_utils.is_scalar (tacky_type dst) ->
+  | Tacky.Load { src_ptr; dst }
+    when Type_utils.is_scalar (Tacky.type_of_val dst) ->
       let asm_src_ptr = convert_val src_ptr in
       let asm_dst = convert_val dst in
       let t = asm_type dst in
@@ -659,10 +652,11 @@ let convert_instruction = function
   | Tacky.Load { src_ptr; dst } ->
       let asm_src_ptr = convert_val src_ptr in
       let asm_dst = convert_val dst in
-      let byte_count = Type_utils.get_size (tacky_type dst) in
+      let byte_count = Type_utils.get_size (Tacky.type_of_val dst) in
       Mov (Quadword, asm_src_ptr, Reg R9)
       :: copy_bytes (Memory (R9, 0)) asm_dst ~byte_count
-  | Tacky.Store { src; dst_ptr } when Type_utils.is_scalar (tacky_type src) ->
+  | Tacky.Store { src; dst_ptr }
+    when Type_utils.is_scalar (Tacky.type_of_val src) ->
       let asm_src = convert_val src in
       let t = asm_type src in
       let asm_dst_ptr = convert_val dst_ptr in
@@ -670,7 +664,7 @@ let convert_instruction = function
   | Tacky.Store { src; dst_ptr } ->
       let asm_src = convert_val src in
       let asm_dst_ptr = convert_val dst_ptr in
-      let byte_count = Type_utils.get_size (tacky_type src) in
+      let byte_count = Type_utils.get_size (Tacky.type_of_val src) in
       Mov (Quadword, asm_dst_ptr, Reg R9)
       :: copy_bytes asm_src (Memory (R9, 0)) ~byte_count
   | Tacky.GetAddress { src; dst } ->
@@ -756,7 +750,7 @@ let convert_instruction = function
   | Tacky.UIntToDouble { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      if tacky_type src = Types.UChar then
+      if Tacky.type_of_val src = Types.UChar then
         [
           MovZeroExtend
             {
@@ -767,7 +761,7 @@ let convert_instruction = function
             };
           Cvtsi2sd (Longword, Reg R9, asm_dst);
         ]
-      else if tacky_type src = Types.UInt then
+      else if Tacky.type_of_val src = Types.UInt then
         [
           MovZeroExtend
             {
@@ -805,9 +799,9 @@ let convert_instruction = function
   | Tacky.DoubleToUInt { src; dst } ->
       let asm_src = convert_val src in
       let asm_dst = convert_val dst in
-      if tacky_type dst = Types.UChar then
+      if Tacky.type_of_val dst = Types.UChar then
         [ Cvttsd2si (Longword, asm_src, Reg R9); Mov (Byte, Reg R9, asm_dst) ]
-      else if tacky_type dst = Types.UInt then
+      else if Tacky.type_of_val dst = Types.UInt then
         Assembly.
           [
             Cvttsd2si (Quadword, asm_src, Reg R9);
@@ -835,21 +829,21 @@ let convert_instruction = function
           Binary { op = Add; t = Quadword; src = r; dst = asm_dst };
           Label end_lbl;
         ]
-  | CopyToOffset { src; dst; offset } when Type_utils.is_scalar (tacky_type src)
-    ->
+  | CopyToOffset { src; dst; offset }
+    when Type_utils.is_scalar (Tacky.type_of_val src) ->
       [ Mov (asm_type src, convert_val src, PseudoMem (dst, offset)) ]
   | CopyToOffset { src; dst; offset } ->
       let asm_src = convert_val src in
       let asm_dst = Assembly.PseudoMem (dst, offset) in
-      let byte_count = Type_utils.get_size (tacky_type src) in
+      let byte_count = Type_utils.get_size (Tacky.type_of_val src) in
       copy_bytes asm_src asm_dst ~byte_count
   | CopyFromOffset { src; dst; offset }
-    when Type_utils.is_scalar (tacky_type dst) ->
+    when Type_utils.is_scalar (Tacky.type_of_val dst) ->
       [ Mov (asm_type dst, PseudoMem (src, offset), convert_val dst) ]
   | CopyFromOffset { src; dst; offset } ->
       let asm_src = Assembly.PseudoMem (src, offset) in
       let asm_dst = convert_val dst in
-      let byte_count = Type_utils.get_size (tacky_type dst) in
+      let byte_count = Type_utils.get_size (Tacky.type_of_val dst) in
       copy_bytes asm_src asm_dst ~byte_count
   | AddPtr { ptr; index = Constant (Const.ConstLong c); scale; dst } ->
       (* note that typechecker converts index to long
