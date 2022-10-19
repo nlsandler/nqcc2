@@ -1,10 +1,42 @@
+module type Infix = sig
+  type t
+
+  val ( + ) : t -> t -> t
+  val ( - ) : t -> t -> t
+  val ( / ) : t -> t -> t
+  val ( * ) : t -> t -> t
+end
+
+module type Compare = sig
+  type t
+
+  val ( = ) : t -> t -> bool
+  val ( <> ) : t -> t -> bool
+  val ( < ) : t -> t -> bool
+  val ( <= ) : t -> t -> bool
+  val ( > ) : t -> t -> bool
+  val ( >= ) : t -> t -> bool
+end
+
 (* basic interface supporting integer conversions,
  * satisfied by both our types and the ones provided by batteries *)
 
-module type NumLike = sig
+module type BasicNumLike = sig
   type t
 
+  module Infix : Infix with type t := t
+  module Compare : Compare with type t := t
+
   val zero : t
+  val compare : t -> t -> int
+  val equal : t -> t -> bool
+  val lognot : t -> t
+  val neg : t -> t
+  val rem : t -> t -> t
+end
+
+module type NumLike = sig
+  include BasicNumLike
 
   (* conversions *)
   val of_int32 : int32 -> t

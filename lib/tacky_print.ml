@@ -15,7 +15,8 @@ let pp_unary_operator out = function
   | Negate -> Format.pp_print_string out "-"
   | Not -> Format.pp_print_string out "!"
 
-let pp_binary_operator out = function
+(* optional escape_brackets argument lets us escape < and > when instructions appear in HTML-style tables in graphviz *)
+let pp_binary_operator ?(escape_brackets = false) out = function
   | Add -> Format.pp_print_string out "+"
   | Subtract -> Format.pp_print_string out "-"
   | Multiply -> Format.pp_print_string out "*"
@@ -23,10 +24,18 @@ let pp_binary_operator out = function
   | Mod -> Format.pp_print_string out "%"
   | Equal -> Format.pp_print_string out "=="
   | NotEqual -> Format.pp_print_string out "!="
-  | LessThan -> Format.pp_print_string out "<"
-  | LessOrEqual -> Format.pp_print_string out "<="
-  | GreaterThan -> Format.pp_print_string out ">"
-  | GreaterOrEqual -> Format.pp_print_string out "<="
+  | LessThan ->
+      let s = if escape_brackets then "&lt;" else "<" in
+      Format.pp_print_string out s
+  | LessOrEqual ->
+      let s = if escape_brackets then "&lt;=" else "<=" in
+      Format.pp_print_string out s
+  | GreaterThan ->
+      let s = if escape_brackets then "&gt;" else ">" in
+      Format.pp_print_string out s
+  | GreaterOrEqual ->
+      let s = if escape_brackets then "&gt;=" else ">=" in
+      Format.pp_print_string out s
 
 let const_to_string = function
   | Const.ConstInt i -> Int32.to_string i
@@ -41,7 +50,7 @@ let pp_tacky_val out = function
   | Constant i -> Format.pp_print_string out (const_to_string i)
   | Var s -> Format.pp_print_string out s
 
-let pp_instruction out = function
+let pp_instruction ?(escape_brackets = false) out = function
   | Return None -> Format.pp_print_string out "Return"
   | Return (Some v) -> Format.fprintf out "Return(%a)" pp_tacky_val v
   | Unary { op; src; dst } ->
@@ -49,7 +58,8 @@ let pp_instruction out = function
         pp_tacky_val src
   | Binary { op; src1; src2; dst } ->
       Format.fprintf out "%a = %a %a %a" pp_tacky_val dst pp_tacky_val src1
-        pp_binary_operator op pp_tacky_val src2
+        (pp_binary_operator ~escape_brackets)
+        op pp_tacky_val src2
   | Copy { src; dst } ->
       Format.fprintf out "%a = %a" pp_tacky_val dst pp_tacky_val src
   | Jump s -> Format.fprintf out "Jump(%s)" s
@@ -100,7 +110,8 @@ let pp_instruction out = function
   | CopyFromOffset { src; offset; dst } ->
       Format.fprintf out "%a = %s[offset = %d]" pp_tacky_val dst src offset
 
-let pp_function_definition global name params out body =
+let pp_function_definition ?(escape_brackets = false) global name params out
+    body =
   Format.pp_open_vbox out 0;
   if global then Format.pp_print_string out "global ";
   Format.fprintf out "%s(%a):" name
@@ -108,13 +119,13 @@ let pp_function_definition global name params out body =
     params;
   Format.pp_print_break out 0 4;
   Format.pp_open_vbox out 0;
-  Format.pp_print_list pp_instruction out body;
+  Format.pp_print_list (pp_instruction ~escape_brackets) out body;
   Format.pp_close_box out ();
   Format.pp_close_box out ()
 
-let pp_tl out = function
+let pp_tl ?(escape_brackets = false) out = function
   | Function { global; name; params; body } ->
-      pp_function_definition global name params out body
+      pp_function_definition ~escape_brackets global name params out body
   | StaticVariable { global; name; init; t } ->
       Format.pp_open_vbox out 0;
       if global then Format.pp_print_string out "global ";
@@ -126,20 +137,22 @@ let pp_tl out = function
         Initializers.pp_static_init init;
       Format.pp_close_box out ()
 
-let pp_program out (Program tls) =
+let pp_program ?(escape_brackets = false) out (Program tls) =
   Format.pp_open_vbox out 0;
   Format.pp_print_list
     ~pp_sep:(fun out () ->
       (* print _two_ newlines b/t top levels *)
       Format.pp_print_cut out ();
       Format.pp_print_cut out ())
-    pp_tl out tls;
+    (pp_tl ~escape_brackets) out tls;
   Format.pp_close_box out ();
   Format.pp_print_newline out () (* flush *)
 
-let debug_print_tacky src_filename tacky_prog =
-  if !Settings.debug then (
-    let tacky_file = Filename.chop_extension src_filename ^ ".debug.tacky" in
+let debug_print_tacky ~tag ~file tacky_prog =
+  if !Settings.debug.dump_tacky then (
+    let tacky_file =
+      Printf.sprintf "%s.%s.tacky" (Filename.remove_extension file) tag
+    in
     let chan = open_out tacky_file in
     let formatter = Format.formatter_of_out_channel chan in
     pp_program formatter tacky_prog;

@@ -1,6 +1,6 @@
 open Batteries
 
-let compile stage src_file =
+let compile stage optimizations src_file =
   (* read in the file - TODO use streams? *)
   let source_lines = File.lines_of src_file in
   (* concatenate all the lines *)
@@ -26,14 +26,18 @@ let compile stage src_file =
         (* Convert the AST to TACKY *)
         let tacky = Tacky_gen.gen typed_ast in
         (* print to file (src filename with .debug.tacky extension) if debug is enabled*)
-        Tacky_print.debug_print_tacky src_file tacky;
+        Tacky_print.debug_print_tacky ~tag:"pre_opt" ~file:src_file tacky;
+        (* optimize it! *)
+        let optimized_tacky = Optimize.optimize optimizations src_file tacky in
+        Tacky_print.debug_print_tacky ~tag:"post_opt" ~file:src_file
+          optimized_tacky;
         if stage = Settings.Tacky then ()
         else
           (* Assembly generation has three steps:
            * 1. convert TACKY to assembly *)
-          let asm_ast = Codegen.gen tacky in
+          let asm_ast = Codegen.gen optimized_tacky in
           (* print pre-pseudoreg-allocation assembly if debug enabled *)
-          (if !Settings.debug then
+          (if !Settings.debug.dump_asm then
              let prealloc_filename =
                Filename.chop_extension src_file ^ ".prealloc.debug.s"
              in
