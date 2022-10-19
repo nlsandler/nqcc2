@@ -10,6 +10,7 @@ type t =
   | ConstUInt of UInt32.t
   | ConstULong of UInt64.t
   | ConstDouble of Float.t
+[@@deriving eq, ord]
 
 (* print functions for debugging *)
 let show = function
