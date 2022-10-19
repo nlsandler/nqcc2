@@ -1,6 +1,7 @@
 module ListUtil = struct
   let max cmp l = List.(hd (rev (sort cmp l)))
   let make_list len v = List.init len (fun _ -> v)
+  let last l = List.hd (List.rev l)
 
   let rec take n = function
     | [] -> []

@@ -3,19 +3,26 @@
 (library
  (name nqcc)
  (modules
+  address_taken
   ast
   assembly
   assembly_symbols
+  cfg
   codegen
   compile
   const
   const_convert
+  constant_folding
+  copy_prop
+  dead_store_elim
   emit
   initializers
   instruction_fixup
   int8
   label_loops
   lex
+  optimize
+  optimize_utils
   parse
   replace_pseudos
   resolve
@@ -32,6 +39,7 @@
   type_utils
   settings
   unique_ids
+  unreachable_code_elim
   utils)
  (libraries re camlp-streams zarith integers)
  (preprocess

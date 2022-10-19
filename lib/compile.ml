@@ -1,4 +1,4 @@
-let compile stage src_file =
+let compile stage optimizations src_file =
   (* read in the file - TODO use streams? *)
   let source = In_channel.with_open_text src_file In_channel.input_all in
   (* Lex it *)
@@ -22,11 +22,13 @@ let compile stage src_file =
         (* print to file (src filename with .debug.tacky extension) if debug is
            enabled *)
         Tacky_print.debug_print_tacky src_file tacky;
+        (* optimize it! *)
+        let optimized_tacky = Optimize.optimize optimizations src_file tacky in
         if stage = Settings.Tacky then ()
         else
           (* Assembly generation has three steps:
            * 1. convert TACKY to assembly *)
-          let asm_ast = Codegen.gen tacky in
+          let asm_ast = Codegen.gen optimized_tacky in
           (* print pre-pseudoreg-allocation assembly if debug enabled *)
           (if !Settings.debug then
              let prealloc_filename =

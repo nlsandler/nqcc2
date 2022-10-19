@@ -8,6 +8,7 @@ module ListUtil : sig
   val make_list : int -> 'a -> 'a list
   (** [make_list n v] returns a list of [n] elements with value [v] *)
 
+  val last : 'a list -> 'a
   val take : int -> 'a list -> 'a list
 
   val take_drop : int -> 'a list -> 'a list * 'a list
