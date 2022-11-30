@@ -8,6 +8,7 @@
   ast
   assembly
   assembly_symbols
+  backward_dataflow
   cfg
   cnums
   codegen
@@ -31,6 +32,7 @@
   num_interfaces
   optimize
   parse
+  regalloc
   replace_pseudos
   rounding
   symbols
