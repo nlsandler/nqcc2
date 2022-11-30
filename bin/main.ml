@@ -150,6 +150,14 @@ let debug =
     in
     Arg.(value & flag & info [ "dump-unreachable-elim" ] ~doc)
   in
+  let dump_gp_regalloc_opt =
+    let doc = "Verbosity level when allocating general-purpose registers" in
+    Arg.(value & opt ~vopt:1 int 0 & info [ "dump-gp-regalloc" ] ~doc)
+  in
+  let dump_xmm_regalloc_opt =
+    let doc = "Verbosity level when allocating XMM registers" in
+    Arg.(value & opt ~vopt:1 int 0 & info [ "dump-xmm-regalloc" ] ~doc)
+  in
   let dump_fun_opt =
     let doc =
       "Function to dump extra optimization details for (if not specified, dump \
@@ -160,7 +168,16 @@ let debug =
   in
   let set_debug_options dump_asm dump_tacky constant_folding
       dead_store_elimination copy_propagation unreachable_code_elimination
-      dump_fun =
+      dump_gp_regalloc_lvl dump_xmm_regalloc_lvl dump_fun =
+    let mk_regalloc_opts dump_lvl =
+      Settings.
+        {
+          spill_info = dump_lvl >= 1;
+          interference_ncol = dump_lvl >= 2;
+          interference_graphviz = dump_lvl >= 3;
+          liveness = dump_lvl >= 4;
+        }
+    in
     Settings.
       {
         dump_asm;
@@ -172,6 +189,8 @@ let debug =
             unreachable_code_elimination;
             copy_propagation;
           };
+        dump_gp_regalloc = mk_regalloc_opts dump_gp_regalloc_lvl;
+        dump_xmm_regalloc = mk_regalloc_opts dump_xmm_regalloc_lvl;
         dump_fun;
       }
   in
@@ -183,6 +202,8 @@ let debug =
     $ dump_dse_opt
     $ dump_copy_prop_opt
     $ dump_unreachable_elim_opt
+    $ dump_gp_regalloc_opt
+    $ dump_xmm_regalloc_opt
     $ dump_fun_opt)
 
 let src_file =
