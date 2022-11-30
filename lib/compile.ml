@@ -30,14 +30,20 @@ let compile target stage optimizations src_file =
         let optimized_tacky = Optimize.optimize optimizations tacky in
         if stage = Settings.Tacky then ()
         else
+          (* start by getting all aliased vars, we'll need them for register allocation *)
+          let aliased_vars = Address_taken.analyze_program optimized_tacky in
           (* Assembly generation has three steps:
            * 1. convert TACKY to assembly *)
           let asm_ast = Codegen.gen optimized_tacky in
-          (* replace pseudoregisters with Stack operands *)
-          let asm_ast1 = Replace_pseudos.replace_pseudos asm_ast in
+          let pre_asm_filename = Filename.chop_extension src_file ^ "_pre.s" in
+          let _ = Emit.emit pre_asm_filename asm_ast in
+          (* register allocation *)
+          let asm_ast1 = Regalloc.allocate_registers aliased_vars asm_ast in
+          (* replace remaining pseudoregisters with Data/Stack operands *)
+          let asm_ast2 = Replace_pseudos.replace_pseudos asm_ast1 in
           (* fix up instructions *)
-          let asm_ast2 = Instruction_fixup.fixup_program asm_ast1 in
+          let asm_ast3 = Instruction_fixup.fixup_program asm_ast2 in
           if stage = Settings.Codegen then ()
           else
             let asm_filename = Filename.chop_extension src_file ^ ".s" in
-            Emit.emit asm_filename asm_ast2
+            Emit.emit asm_filename asm_ast3

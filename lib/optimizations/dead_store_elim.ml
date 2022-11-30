@@ -4,10 +4,9 @@ module G = struct
   include Cfg.TackyCfg
 end
 
-type annotated_block = string Set.t G.basic_block
+module Liveness = Backward_dataflow.Dataflow (G)
 
-let transfer static_and_aliased_vars (block : annotated_block)
-    (end_live_variables : string Set.t) =
+let transfer static_and_aliased_vars block (end_live_variables : string Set.t) =
   let remove_var var var_set =
     match var with
     | Tacky.Var v -> Set.remove v var_set
@@ -72,7 +71,7 @@ let transfer static_and_aliased_vars (block : annotated_block)
     (new_live_vars, annotated_instr)
   in
   let incoming_live_vars, annotated_reversed_instructions =
-    block.instructions
+    block.G.instructions
     |> List.rev
     |> List.fold_left_map process_instr end_live_variables
   in
@@ -82,49 +81,19 @@ let transfer static_and_aliased_vars (block : annotated_block)
     value = incoming_live_vars;
   }
 
-let meet static_vars cfg (block : annotated_block) =
+let meet static_vars cfg block =
   let update_live live = function
     | G.Entry -> failwith "Internal error: malformed CFG" [@coverage off]
     | Exit -> Set.union live static_vars
     | Block n -> Set.union live (G.get_block_value n cfg)
   in
-  List.fold update_live Set.empty block.succs
+  List.fold update_live Set.empty block.G.succs
 
 let find_live_variables static_vars aliased_vars (cfg : unit G.t) =
-  let starting_cfg = G.initialize_annotation cfg Set.empty in
   let static_and_aliased_vars = Set.union static_vars aliased_vars in
-  let rec process_worklist current_cfg (worklist : (int * annotated_block) list)
-      =
-    match worklist with
-    | [] -> current_cfg (* we're done*)
-    | (block_idx, blk) :: rest ->
-        let old_annotation = blk.value in
-        let live_vars_at_exit = meet static_vars current_cfg blk in
-        let block' = transfer static_and_aliased_vars blk live_vars_at_exit in
-        let updated_cfg =
-          G.
-            {
-              current_cfg with
-              basic_blocks =
-                List.modify block_idx (fun _ -> block') current_cfg.basic_blocks;
-            }
-        in
-        let new_worklist =
-          if Set.equal old_annotation block'.value then rest
-          else
-            List.fold
-              (fun wklist -> function
-                | G.Entry -> wklist
-                | Exit ->
-                    failwith "Internal error: malformed CFG" [@coverage off]
-                | Block n ->
-                    if List.mem_assoc n wklist then wklist
-                    else (n, List.assoc n updated_cfg.basic_blocks) :: wklist)
-              rest block'.preds
-        in
-        process_worklist updated_cfg new_worklist
-  in
-  process_worklist starting_cfg starting_cfg.basic_blocks
+  let meet_f = meet static_vars in
+  let transfer_f = transfer static_and_aliased_vars in
+  Liveness.analyze meet_f transfer_f cfg
 
 let is_dead_store (live_vars, i) =
   match i with
