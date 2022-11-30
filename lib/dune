@@ -7,6 +7,7 @@
   ast
   assembly
   assembly_symbols
+  backward_dataflow
   cfg
   codegen
   compile
@@ -24,6 +25,8 @@
   optimize
   optimize_utils
   parse
+  regalloc
+  reg_set
   replace_pseudos
   resolve
   rounding

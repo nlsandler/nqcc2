@@ -1,4 +1,5 @@
-module TackyCfg : sig
+module type CFG = sig
+  type instr
   type node_id = Entry | Block of int | Exit
 
   (* Cfg is parameterized by type of val we compute and type of instruction (we
@@ -6,7 +7,7 @@ module TackyCfg : sig
 
   type 'v basic_block = {
     id : node_id;
-    instructions : ('v * Tacky.instruction) list;
+    instructions : ('v * instr) list;
     mutable preds : node_id list;
     mutable succs : node_id list;
     value : 'v;
@@ -20,8 +21,8 @@ module TackyCfg : sig
     debug_label : string;
   }
 
-  val instructions_to_cfg : string -> Tacky.instruction list -> unit t
-  val cfg_to_instructions : 'v t -> Tacky.instruction list
+  val instructions_to_cfg : string -> instr list -> unit t
+  val cfg_to_instructions : 'v t -> instr list
   val get_succs : node_id -> 'v t -> node_id list
   val get_block_value : int -> 'v t -> 'v
   val add_edge : node_id -> node_id -> 'v t -> unit
@@ -33,3 +34,6 @@ module TackyCfg : sig
   (* debugging *)
   val print_graphviz : (Format.formatter -> 'v -> unit) -> 'v t -> unit
 end
+
+module TackyCfg : CFG with type instr = Tacky.instruction
+module AsmCfg : CFG with type instr = Assembly.instruction

@@ -1,5 +1,8 @@
+[@@@coverage exclude_file]
+
 type reg =
   | AX
+  | BX
   | CX
   | DX
   | DI
@@ -8,6 +11,10 @@ type reg =
   | R9
   | R10
   | R11
+  | R12
+  | R13
+  | R14
+  | R15
   | SP
   | BP
   | XMM0
@@ -18,8 +25,15 @@ type reg =
   | XMM5
   | XMM6
   | XMM7
+  | XMM8
+  | XMM9
+  | XMM10
+  | XMM11
+  | XMM12
+  | XMM13
   | XMM14
   | XMM15
+[@@deriving show { with_path = false }, ord]
 
 type operand =
   | Imm of int64
@@ -29,8 +43,9 @@ type operand =
   | Data of string * int
   | PseudoMem of string * int
   | Indexed of { base : reg; index : reg; scale : int }
+[@@deriving show { with_path = false }, ord]
 
-type unary_operator = Neg | Not | Shr
+type unary_operator = Neg | Not | Shr [@@deriving show { with_path = false }]
 
 type binary_operator =
   | Add
@@ -42,8 +57,10 @@ type binary_operator =
   | Xor
   | Shl
   | ShrBinop
+[@@deriving show { with_path = false }]
 
 type cond_code = E | NE | G | GE | L | LE | A | AE | B | BE
+[@@deriving show { with_path = false }]
 
 type asm_type =
   | Byte
@@ -51,6 +68,7 @@ type asm_type =
   | Quadword
   | Double
   | ByteArray of { size : int; alignment : int }
+[@@deriving show { with_path = false }]
 
 type instruction =
   | Mov of asm_type * operand * operand
@@ -85,8 +103,10 @@ type instruction =
   | SetCC of cond_code * operand
   | Label of string
   | Push of operand
+  | Pop of reg
   | Call of string
   | Ret
+[@@deriving show { with_path = false }]
 
 type top_level =
   | Function of {

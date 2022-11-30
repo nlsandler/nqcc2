@@ -111,6 +111,7 @@ let replace_pseudos_in_instruction state = function
       let new_cvt = Cvtsi2sd (t, new_src, new_dst) in
       (state2, new_cvt)
   | (Ret | Cdq _ | Label _ | JmpCC _ | Jmp _ | Call _) as other -> (state, other)
+  | Pop _ -> failwith "Internal error" [@coverage off]
 
 let replace_pseudos_in_tl = function
   | Function { name; global; instructions } ->

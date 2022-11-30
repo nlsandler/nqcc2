@@ -5,6 +5,8 @@ module ListUtil : sig
       comparison function [cmp]
       @raise Failure if the list is empty *)
 
+  val min : ('a -> 'a -> int) -> 'a list -> 'a
+
   val make_list : int -> 'a -> 'a list
   (** [make_list n v] returns a list of [n] elements with value [v] *)
 
