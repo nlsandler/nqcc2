@@ -179,38 +179,22 @@ let classify_structure tag =
       Hashtbl.add classified_structures tag classes;
       classes
 
-let classify_tacky_val v =
-  match Tacky.type_of_val v with
-  | Structure tag -> classify_structure tag
-  | _ ->
-      failwith "Internal error: trying to classify non-structure type"
-      [@coverage off]
-
-let classify_parameters tacky_vals return_on_stack =
+let classify_params_helper typed_asm_vals return_on_stack =
   let int_regs_available = if return_on_stack then 5 else 6 in
-  let process_one_param (int_reg_args, dbl_reg_args, stack_args) v =
-    let operand = convert_val v in
-    let t = asm_type v in
+  let process_one_param (int_reg_args, dbl_reg_args, stack_args)
+      (tacky_t, operand) =
+    let t = convert_type tacky_t in
     let typed_operand = (t, operand) in
-    match t with
-    | Double ->
-        if List.length dbl_reg_args < 8 then
-          (int_reg_args, operand :: dbl_reg_args, stack_args)
-        else (int_reg_args, dbl_reg_args, typed_operand :: stack_args)
-    | Byte | Longword | Quadword ->
-        if List.length int_reg_args < int_regs_available then
-          (typed_operand :: int_reg_args, dbl_reg_args, stack_args)
-        else (int_reg_args, dbl_reg_args, typed_operand :: stack_args)
-    | ByteArray _ ->
+    match tacky_t with
+    | Structure s ->
         (* it's a structure *)
         let var_name =
-          match v with
-          | Tacky.Var n -> n
-          | Constant _ ->
-              failwith "Internal error: constant byte array" [@coverage off]
+          match operand with
+          | Assembly.PseudoMem (n, 0) -> n
+          | _ -> failwith "Bad structure operand" [@coverage off]
         in
-        let var_size = Type_utils.get_size (Tacky.type_of_val v) in
-        let classes = classify_tacky_val v in
+        let var_size = Type_utils.get_size tacky_t in
+        let classes = classify_structure s in
         let updated_int, updated_dbl, use_stack =
           if List.hd classes = Mem then
             (* all eightbytes go on the stack*)
@@ -260,24 +244,48 @@ let classify_parameters tacky_vals return_on_stack =
           else stack_args
         in
         (updated_int, updated_dbl, updated_stack_args)
+    | Double ->
+        if List.length dbl_reg_args < 8 then
+          (int_reg_args, operand :: dbl_reg_args, stack_args)
+        else (int_reg_args, dbl_reg_args, typed_operand :: stack_args)
+    | _ ->
+        if List.length int_reg_args < int_regs_available then
+          (typed_operand :: int_reg_args, dbl_reg_args, stack_args)
+        else (int_reg_args, dbl_reg_args, typed_operand :: stack_args)
   in
 
   let reversed_int, reversed_dbl, reversed_stack =
-    List.fold_left process_one_param ([], [], []) tacky_vals
+    List.fold_left process_one_param ([], [], []) typed_asm_vals
   in
   (List.rev reversed_int, List.rev reversed_dbl, List.rev reversed_stack)
 
-let classify_return_value retval =
+let classify_parameters params return_on_stack =
+  let f v = (Tacky.type_of_val v, convert_val v) in
+  classify_params_helper (List.map f params) return_on_stack
+
+let classify_param_types type_list return_on_stack =
+  let f t =
+    if Type_utils.is_scalar t then (t, Assembly.Pseudo "dummy")
+    else (t, Assembly.PseudoMem ("dummy", 0))
+  in
+  let ints, dbls, _ =
+    classify_params_helper (List.map f type_list) return_on_stack
+  in
+  let int_regs = Utils.take (List.length ints) int_param_passing_regs in
+  let dbl_regs = Utils.take (List.length dbls) dbl_param_passing_regs in
+  int_regs @ dbl_regs
+
+let classify_return_helper ret_type asm_retval =
   let open Assembly in
-  let retval_type = Tacky.type_of_val retval in
-  match retval_type with
+  match ret_type with
   | Types.Structure tag ->
       let classes = classify_structure tag in
       let var_name =
-        match retval with
-        | Tacky.Var n -> n
-        | Constant _ ->
-            failwith "Internal error: constant with structure type"
+        match asm_retval with
+        | PseudoMem (n, 0) -> n
+        | _ ->
+            failwith
+              "Internal error: invalid assembly operand for structure type"
             [@coverage off]
       in
       if List.hd classes = Mem then ([], [], true)
@@ -290,7 +298,7 @@ let classify_return_value retval =
           | Integer ->
               let eightbyte_type =
                 get_eightbyte_type ~eightbyte_idx:i
-                  ~total_var_size:(Type_utils.get_size retval_type)
+                  ~total_var_size:(Type_utils.get_size ret_type)
               in
               (i + 1, ints @ [ (eightbyte_type, operand) ], dbls)
           | Mem ->
@@ -300,12 +308,27 @@ let classify_return_value retval =
         in
         let _, i, d = List.fold_left process_quadword (0, [], []) classes in
         (i, d, false)
-  | Double ->
-      let asm_val = convert_val retval in
-      ([], [ asm_val ], false)
-  | _ ->
-      let typed_operand = (asm_type retval, convert_val retval) in
+  | Double -> ([], [ asm_retval ], false)
+  | t ->
+      let typed_operand = (convert_type t, asm_retval) in
       ([ typed_operand ], [], false)
+
+let classify_return_value retval =
+  classify_return_helper (Tacky.type_of_val retval) (convert_val retval)
+
+let classify_return_type = function
+  | Types.Void -> ([], false)
+  | t ->
+      let asm_val =
+        if Type_utils.is_scalar t then Assembly.Pseudo "dummy"
+        else Assembly.PseudoMem ("dummy", 0)
+      in
+      let ints, dbls, return_on_stack = classify_return_helper t asm_val in
+      if return_on_stack then ([ Assembly.AX ], true)
+      else
+        let int_regs = Utils.take (List.length ints) Assembly.[ AX; DX ] in
+        let dbl_regs = Utils.take (List.length dbls) Assembly.[ XMM0; XMM1 ] in
+        (int_regs @ dbl_regs, false)
 
 let convert_function_call f args dst =
   let int_retvals, dbl_retvals, return_on_stack =
@@ -849,15 +872,23 @@ let convert_constant (key, (name, alignment)) =
 (* convert each symbol table entry to assembly symbol table equivalent*)
 let convert_symbol name = function
   | Symbols.
-      { t = Types.FunType { ret_type; _ }; attrs = FunAttr { defined; _ } } ->
-      (* If this function has incomplete return type (implying we don't define or call it in this translation unit)
-       * use a dummy value for fun_returns_on_stack *)
-      let fun_returns_on_stack =
-        if Type_utils.is_complete ret_type || ret_type = Void then
-          returns_on_stack name
-        else false
-      in
-      Assembly_symbols.add_fun name defined fun_returns_on_stack
+      {
+        t = Types.FunType { param_types; ret_type };
+        attrs = FunAttr { defined; _ };
+      }
+    when (Type_utils.is_complete ret_type || ret_type = Void)
+         && List.for_all Type_utils.is_complete param_types ->
+      let ret_regs, return_on_stack = classify_return_type ret_type in
+
+      let param_regs = classify_param_types param_types return_on_stack in
+      Assembly_symbols.add_fun name defined (returns_on_stack name) param_regs
+        ret_regs
+  | Symbols.{ t = Types.FunType _; attrs = FunAttr { defined; _ } } ->
+      (* If this function has incomplete return type besides void, or any incomplete
+       * param type (implying we don't define or call it in this translation unit)
+       * use dummy values *)
+      assert (not defined);
+      Assembly_symbols.add_fun name defined false [] []
   | { t; attrs = ConstAttr _ } ->
       Assembly_symbols.add_constant name (convert_type t)
   (* use dummy type for static variables of incomplete type *)

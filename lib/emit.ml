@@ -26,6 +26,7 @@ let show_fun_name f =
 
 let show_long_reg = function
   | AX -> "%eax"
+  | BX -> "%ebx"
   | CX -> "%ecx"
   | DX -> "%edx"
   | DI -> "%edi"
@@ -34,6 +35,10 @@ let show_long_reg = function
   | R9 -> "%r9d"
   | R10 -> "%r10d"
   | R11 -> "%r11d"
+  | R12 -> "%r12d"
+  | R13 -> "%r13d"
+  | R14 -> "%r14d"
+  | R15 -> "%r15d"
   | SP -> failwith "Internal error: no 32-bit RSP" [@coverage off]
   | BP -> failwith "Internal error: no 32-bit RBP" [@coverage off]
   | _ ->
@@ -42,6 +47,7 @@ let show_long_reg = function
 
 let show_quadword_reg = function
   | AX -> "%rax"
+  | BX -> "%rbx"
   | CX -> "%rcx"
   | DX -> "%rdx"
   | DI -> "%rdi"
@@ -50,6 +56,10 @@ let show_quadword_reg = function
   | R9 -> "%r9"
   | R10 -> "%r10"
   | R11 -> "%r11"
+  | R12 -> "%r12"
+  | R13 -> "%r13"
+  | R14 -> "%r14"
+  | R15 -> "%r15"
   | SP -> "%rsp"
   | BP -> "%rbp"
   | _ ->
@@ -65,6 +75,12 @@ let show_double_reg = function
   | XMM5 -> "%xmm5"
   | XMM6 -> "%xmm6"
   | XMM7 -> "%xmm7"
+  | XMM8 -> "%xmm8"
+  | XMM9 -> "%xmm9"
+  | XMM10 -> "%xmm10"
+  | XMM11 -> "%xmm11"
+  | XMM12 -> "%xmm12"
+  | XMM13 -> "%xmm13"
   | XMM14 -> "%xmm14"
   | XMM15 -> "%xmm15"
   | _ ->
@@ -74,6 +90,7 @@ let show_double_reg = function
 
 let show_byte_reg = function
   | AX -> "%al"
+  | BX -> "%bl"
   | CX -> "%cl"
   | DX -> "%dl"
   | DI -> "%dil"
@@ -82,6 +99,10 @@ let show_byte_reg = function
   | R9 -> "%r9b"
   | R10 -> "%r10b"
   | R11 -> "%r11b"
+  | R12 -> "%r12b"
+  | R13 -> "%r13b"
+  | R14 -> "%r14b"
+  | R15 -> "%r15b"
   | SP -> failwith "Internal error: no one-byte RSP" [@coverage off]
   | BP -> failwith "Internal error: no one-byte RBP" [@coverage off]
   | _ ->
@@ -194,6 +215,7 @@ let emit_instruction chan = function
         (show_byte_operand operand)
   | Label lbl -> Printf.fprintf chan "%s:\n" (show_local_label lbl)
   | Push op -> Printf.fprintf chan "\tpushq %s\n" (show_operand Quadword op)
+  | Pop r -> Printf.fprintf chan "\tpopq %s\n" (show_quadword_reg r)
   | Call f -> Printf.fprintf chan "\tcall %s\n" (show_fun_name f)
   | Movsx { src_type; dst_type; src; dst } ->
       Printf.fprintf chan "\tmovs%s%s %s, %s\n" (suffix src_type)

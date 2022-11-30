@@ -15,6 +15,9 @@ let rec take_drop n = function
       (h :: l1, l2)
   | l -> ([], l)
 
+let max cmp l = List.(hd (rev (sort cmp l)))
+let min cmp l = List.(hd (sort cmp l))
+
 (* Construct a list with len elements of value v*)
 let make_list len v = List.init len (fun _ -> v)
 let%test "empty_0" = take_drop 0 [] = ([], [])

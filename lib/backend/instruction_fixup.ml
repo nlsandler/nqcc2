@@ -20,11 +20,12 @@ let is_memory = function
   | _ -> false
 
 let is_xmm = function
-  | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7 | XMM14 | XMM15 ->
+  | XMM0 | XMM1 | XMM2 | XMM3 | XMM4 | XMM5 | XMM6 | XMM7 | XMM8 | XMM9 | XMM10
+  | XMM11 | XMM12 | XMM13 | XMM14 | XMM15 ->
       true
   | _ -> false
 
-let fixup_instruction = function
+let fixup_instruction callee_saved_regs = function
   (* Mov can't move a value from one memory address to another *)
   | Mov (t, ((Memory _ | Data _) as src), ((Memory _ | Data _) as dst)) ->
       let scratch = if t = Double then Reg XMM14 else Reg R10 in
@@ -199,22 +200,45 @@ let fixup_instruction = function
       else if is_memory dst then
         [ Cvtsi2sd (t, src, Reg XMM15); Mov (Double, Reg XMM15, dst) ]
       else [ i ]
+  | Ret ->
+      let restore_reg r = Pop r in
+      let restore_regs = List.rev_map restore_reg callee_saved_regs in
+      restore_regs @ [ Ret ]
   | other -> [ other ]
+
+let emit_stack_adjustment bytes_for_locals callee_saved_count =
+  let callee_saved_bytes = 8 * callee_saved_count in
+  let total_stack_bytes = callee_saved_bytes + bytes_for_locals in
+  let adjusted_stack_bytes =
+    Rounding.round_away_from_zero 16 total_stack_bytes
+  in
+  let stack_adjustment =
+    Int64.of_int (adjusted_stack_bytes - callee_saved_bytes)
+  in
+  Binary { op = Sub; t = Quadword; src = Imm stack_adjustment; dst = Reg SP }
 
 let fixup_tl = function
   | Function { name; global; instructions } ->
-      let stack_bytes =
-        Rounding.round_away_from_zero 16
-          (-Assembly_symbols.get_bytes_required name)
+      (* TODO bytes_required should be positive (fix this in replace_pseudos) *)
+      let stack_bytes = -Assembly_symbols.get_bytes_required name in
+      let callee_saved_regs =
+        Assembly_symbols.get_callee_saved_regs_used name |> Reg_set.to_list
       in
-      let stack_byte_op = Imm (Int64.of_int stack_bytes) in
+
+      let save_reg r = Push (Reg r) in
+      let adjust_rsp =
+        emit_stack_adjustment stack_bytes (List.length callee_saved_regs)
+      in
+      let setup_instructions =
+        adjust_rsp :: List.map save_reg callee_saved_regs
+      in
       Function
         {
           name;
           global;
           instructions =
-            Binary { op = Sub; t = Quadword; src = stack_byte_op; dst = Reg SP }
-            :: List.concat_map fixup_instruction instructions;
+            setup_instructions
+            @ List.concat_map (fixup_instruction callee_saved_regs) instructions;
         }
   | static_var -> static_var
 
