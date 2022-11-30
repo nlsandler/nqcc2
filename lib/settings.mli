@@ -7,12 +7,23 @@ type optimizations = {
   unreachable_code_elimination : bool;
   copy_propagation : bool;
 }
+
+type regalloc_debug_options = {
+  spill_info : bool;
+  interference_ncol : bool;
+  interference_graphviz : bool;
+  liveness : bool;
+}
+
 type debug_options = {
   (* dumping intermediate representations *)
   dump_tacky : bool;
   dump_asm : bool;
   (* dumping extra info about specific optimizations*)
   dump_optimizations : optimizations;
+    (* dumping extra info during register allocation *)
+    dump_gp_regalloc : regalloc_debug_options;
+    dump_xmm_regalloc : regalloc_debug_options;
   (* If specified, we dump optimization info only for this function;
    * otherwise dump for all functions
    * doesn't impact dump_tacky/dump_asm, which always dump the whole program *)
