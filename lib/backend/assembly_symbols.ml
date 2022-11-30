@@ -1,14 +1,29 @@
 open Batteries
 
 type entry =
-  | Fun of { defined : bool; bytes_required : int; return_on_stack : bool }
+  | Fun of {
+      defined : bool;
+      bytes_required : int;
+      return_on_stack : bool;
+      param_regs : Assembly.reg list;
+      return_regs : Assembly.reg list;
+      callee_saved_regs_used : Assembly.reg Set.t;
+    }
   | Obj of { t : Assembly.asm_type; is_static : bool; constant : bool }
 
 let (symbol_table : (string, entry) Hashtbl.t) = Hashtbl.create 20
 
-let add_fun fun_name defined return_on_stack =
+let add_fun fun_name defined return_on_stack param_regs return_regs =
   Hashtbl.replace symbol_table fun_name
-    (Fun { defined; bytes_required = 0; return_on_stack })
+    (Fun
+       {
+         defined;
+         bytes_required = 0;
+         callee_saved_regs_used = Set.empty;
+         return_on_stack;
+         param_regs;
+         return_regs;
+       })
 
 let add_var var_name t is_static =
   Hashtbl.replace symbol_table var_name (Obj { t; is_static; constant = false })
@@ -27,6 +42,24 @@ let set_bytes_required fun_name bytes_required =
 let get_bytes_required fun_name =
   match Hashtbl.find symbol_table fun_name with
   | Fun f -> f.bytes_required
+  | Obj _ -> failwith "Internal error: not a function" [@coverage off]
+
+let add_callee_saved_regs_used fun_name regs =
+  let set_regs = function
+    | Fun f ->
+        Fun
+          {
+            f with
+            callee_saved_regs_used = Set.union f.callee_saved_regs_used regs;
+          }
+    | Obj _ -> failwith "Internal error: not a function" [@coverage off]
+  in
+
+  Hashtbl.modify fun_name set_regs symbol_table
+
+let get_callee_saved_regs_used fun_name =
+  match Hashtbl.find symbol_table fun_name with
+  | Fun f -> f.callee_saved_regs_used
   | Obj _ -> failwith "Internal error: not a function" [@coverage off]
 
 let get_size var_name =
@@ -82,3 +115,13 @@ let returns_on_stack fun_name =
   | Obj _ ->
       failwith "Internal error: this is an object, not a function"
       [@coverage off]
+
+let param_regs_used fun_name =
+  match Hashtbl.find symbol_table fun_name with
+  | Fun f -> f.param_regs
+  | Obj _ -> failwith "Internal error: not a function" [@coverage off]
+
+let return_regs_used fun_name =
+  match Hashtbl.find symbol_table fun_name with
+  | Fun f -> f.return_regs
+  | Obj _ -> failwith "Internal error: not a function" [@coverage off]
