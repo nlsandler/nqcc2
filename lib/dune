@@ -20,6 +20,7 @@
   copy_prop
   dead_store_elim
   debug
+  disjoint_sets
   emit
   extended_big_int
   optimize_utils

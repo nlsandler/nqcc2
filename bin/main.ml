@@ -172,7 +172,7 @@ let debug =
     let mk_regalloc_opts dump_lvl =
       Settings.
         {
-          spill_info = dump_lvl >= 1;
+          debug_msg = dump_lvl >= 1;
           interference_ncol = dump_lvl >= 2;
           interference_graphviz = dump_lvl >= 3;
           liveness = dump_lvl >= 4;

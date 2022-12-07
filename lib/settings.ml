@@ -20,7 +20,7 @@ type optimizations = {
 }
 
 type regalloc_debug_options = {
-  spill_info : bool;
+  debug_msg : bool;
   interference_ncol : bool;
   interference_graphviz : bool;
   liveness : bool;
@@ -44,7 +44,7 @@ type debug_options = {
 let debug =
   let regalloc_default =
     {
-      spill_info = false;
+      debug_msg = false;
       interference_ncol = false;
       interference_graphviz = false;
       liveness = false;
