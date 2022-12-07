@@ -9,7 +9,7 @@ type optimizations = {
 }
 
 type regalloc_debug_options = {
-  spill_info : bool;
+  debug_msg : bool;
   interference_ncol : bool;
   interference_graphviz : bool;
   liveness : bool;
