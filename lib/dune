@@ -18,6 +18,7 @@
   constant_folding
   copy_prop
   dead_store_elim
+  disjoint_sets
   emit
   extended_big_int
   optimize_utils
