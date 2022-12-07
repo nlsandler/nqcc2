@@ -14,6 +14,7 @@ module OperandSet = Set.Make (Operand)
 module StringSet = Set.Make (String)
 module StringMap = Map.Make (String)
 module IntMap = Map.Make (Int)
+module Disjoint = Disjoint_sets.Make (Operand)
 
 let debug_print fmt =
   Printf.ksprintf
@@ -41,6 +42,7 @@ let get_operands = function
   | Label _ | Call _ | Ret | Cdq _ | JmpCC _ | Jmp _ -> []
   | Pop _ -> failwith "Internal error" [@coverage off]
 
+(* map functon f over all the operands in an instruction *)
 let replace_ops f i =
   match i with
   | Mov (t, src, dst) -> Mov (t, f src, f dst)
@@ -57,7 +59,7 @@ let replace_ops f i =
   | SetCC (code, dst) -> SetCC (code, f dst)
   | Push v -> Push (f v)
   | Label _ | Call _ | Ret | Cdq _ | Jmp _ | JmpCC _ -> i
-  | Pop _ -> failwith "We shouldn't use this yet" [@coverage off]
+  | Pop _ -> failwith "Shouldn't use this yet" [@coverage off]
 
 let cleanup_movs instructions =
   let is_redundant_mov = function
@@ -199,12 +201,26 @@ module Allocator (R : REG_TYPE) = struct
   [@@coverage off]
 
   let k = OperandSet.cardinal all_hardregs
+  let get_node_by_id graph node_id = NodeMap.find node_id graph
 
   let add_edge g nd_id1 nd_id2 =
     let nd1 = NodeMap.find nd_id1 g in
     let nd2 = NodeMap.find nd_id2 g in
     nd1.neighbors <- OperandSet.add nd_id2 nd1.neighbors;
     nd2.neighbors <- OperandSet.add nd_id1 nd2.neighbors
+
+  let remove_edge g nd_id1 nd_id2 =
+    let nd1, nd2 = (get_node_by_id g nd_id1, get_node_by_id g nd_id2) in
+    nd1.neighbors <- OperandSet.remove nd_id2 nd1.neighbors;
+    nd2.neighbors <- OperandSet.remove nd_id1 nd2.neighbors
+
+  let degree graph nd_id =
+    let nd = get_node_by_id graph nd_id in
+    OperandSet.cardinal nd.neighbors
+
+  let are_neighbors g nd_id1 nd_id2 =
+    let nd1 = NodeMap.find nd_id1 g in
+    OperandSet.mem nd_id2 nd1.neighbors
 
   module LivenessAnalysis = struct
     open AsmCfg
@@ -359,6 +375,91 @@ module Allocator (R : REG_TYPE) = struct
     in
     NodeMap.map set_spill_cost graph
 
+  let george_test graph ~hardreg ~pseudo =
+    let pseudoreg_neighbors = (get_node_by_id graph pseudo).neighbors in
+    let neighbor_is_ok neighbor_id =
+      (* a neighbor of the pseudo won't interfere with coalescing
+       * if it has insignificant degree or it already interferes with hardreg *)
+      are_neighbors graph neighbor_id hardreg || degree graph neighbor_id < k
+    in
+    OperandSet.for_all neighbor_is_ok pseudoreg_neighbors
+
+  let briggs_test graph x y =
+    let x_nd = get_node_by_id graph x in
+    let y_nd = get_node_by_id graph y in
+    let neighbors = OperandSet.union x_nd.neighbors y_nd.neighbors in
+    let has_significant_degree neighbor_id =
+      let deg = degree graph neighbor_id in
+      let adjusted_deg =
+        if
+          are_neighbors graph x neighbor_id && are_neighbors graph y neighbor_id
+        then deg - 1
+        else deg
+      in
+      adjusted_deg >= k
+    in
+    let count_significant neighbor cnt =
+      if has_significant_degree neighbor then cnt + 1 else cnt
+    in
+    let significant_neighbor_count =
+      OperandSet.fold count_significant neighbors 0
+    in
+    significant_neighbor_count < k
+
+  let conservative_coalescable graph src dst =
+    if briggs_test graph src dst then true
+    else
+      match (src, dst) with
+      | Reg _, _ -> george_test graph ~hardreg:src ~pseudo:dst
+      | _, Reg _ -> george_test graph ~hardreg:dst ~pseudo:src
+      | _ -> false
+
+  let update_graph g ~to_merge ~to_keep =
+    let update_neighbor neighbor_id =
+      add_edge g neighbor_id to_keep;
+      remove_edge g neighbor_id to_merge
+    in
+    OperandSet.iter update_neighbor (get_node_by_id g to_merge).neighbors;
+    NodeMap.remove to_merge g
+
+  let coalesce graph instructions =
+    let process_instr (g, reg_map) = function
+      | Mov (_, src, dst) ->
+          let src' = Disjoint.find src reg_map in
+          let dst' = Disjoint.find dst reg_map in
+          if
+            NodeMap.mem src' g
+            && NodeMap.mem dst' g
+            && src' <> dst'
+            && (not (are_neighbors g src' dst'))
+            && conservative_coalescable g src' dst'
+          then
+            match src' with
+            | Reg _ ->
+                ( update_graph g ~to_merge:dst' ~to_keep:src',
+                  Disjoint.union dst' src' reg_map )
+            | _ ->
+                ( update_graph g ~to_merge:src' ~to_keep:dst',
+                  Disjoint.union src' dst' reg_map )
+          else (g, reg_map)
+      | _ -> (g, reg_map)
+    in
+    let _updated_graph, new_instructions =
+      List.fold_left process_instr (graph, Disjoint.init) instructions
+    in
+    new_instructions
+
+  let rewrite_coalesced instructions coalesced_regs =
+    let f r = Disjoint.find r coalesced_regs in
+    let rewrite_instruction = function
+      | Mov (t, src, dst) ->
+          let new_src = f src in
+          let new_dst = f dst in
+          if new_src = new_dst then None else Some (Mov (t, new_src, new_dst))
+      | i -> Some (replace_ops f i)
+    in
+    List.filter_map rewrite_instruction instructions
+
   let rec color_graph graph =
     let remaining =
       graph
@@ -387,6 +488,7 @@ module Allocator (R : REG_TYPE) = struct
             let cmp nd1 nd2 =
               Float.compare (spill_metric nd1) (spill_metric nd2)
             in
+
             let print_spill_info nd =
               debug_print "Node %s has degree %d, spill cost %f and metric %f\n"
                 (show_node_id nd.id) (degree nd) nd.spill_cost (spill_metric nd)
@@ -471,14 +573,26 @@ module Allocator (R : REG_TYPE) = struct
     cleanup_movs (List.map (replace_ops f) instructions)
 
   let allocate fn_name aliased_pseudos instructions =
-    let graph : graph =
-      build_interference_graph fn_name aliased_pseudos instructions
+    let rec coalesce_loop current_instructions =
+      let graph : graph =
+        build_interference_graph fn_name aliased_pseudos current_instructions
+      in
+      let coalesced_regs = coalesce graph current_instructions in
+      if Disjoint.is_empty coalesced_regs then (graph, current_instructions)
+      else
+        let new_instructions =
+          rewrite_coalesced current_instructions coalesced_regs
+        in
+        coalesce_loop new_instructions
     in
-    let graph_with_spill_costs = add_spill_costs graph instructions in
+    let coalesced_graph, coalesced_instructions = coalesce_loop instructions in
+    let graph_with_spill_costs =
+      add_spill_costs coalesced_graph coalesced_instructions
+    in
     let colored_graph = color_graph graph_with_spill_costs in
 
     let register_map = make_register_map fn_name colored_graph in
-    replace_pseudoregs instructions register_map
+    replace_pseudoregs coalesced_instructions register_map
 end
 
 module GP = Allocator (struct
