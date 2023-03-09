@@ -1,0 +1,97 @@
+# Build tagged versions of the reference implementation compiler
+name: Build the compiler
+
+on:
+  workflow_dispatch:
+    inputs:
+      chapter:
+        required: true
+        type: string
+      os:
+        required: true
+        default: ubuntu-latest
+
+  workflow_call:
+    inputs:
+      chapter:
+        required: true
+        type: number
+      os:
+        type: string
+        required: true
+        default: ubuntu-latest
+      branch:
+        type: string
+        required: false
+        default: main
+
+env:
+  EXE_DIR: _build/default/bin/
+  EXE_PATH: _build/default/bin/main.exe
+
+jobs:
+
+  build:
+    runs-on: ${{ inputs.os }}
+    env:
+      CHAPTER: ${{ inputs.chapter }}
+
+    steps:
+
+      # first check out at specified branch so we can find commit hash for this chapter
+      - uses: actions/checkout@v4
+        with:
+          repository: nlsandler/nqcc2
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0 # need this to get commit history
+
+      # NOTE: for chapters with extra-credit features we have two commits:
+      # one for regular feature, one for extra credit. The '-n 1' options limits
+      # us to the first (i.e. later i.e. extra credit) commit hash
+      - name: Get commit hash
+        run: |
+          git log --grep "chapter $CHAPTER" -i --format='%H' -n 1
+          commit=$(git log --grep "chapter $CHAPTER" -i --format='%H' -n 1)
+          echo "commit=$commit" >> $GITHUB_ENV
+
+      - name: Check out NQCC at chapter ${{ inputs.chapter }}
+        uses: actions/checkout@v4
+        with:
+          repository: nlsandler/nqcc2
+          ref: ${{ env.commit }}
+
+      - name: Construct cache key
+        id: make-key
+        env:
+          runner_os: ${{ runner.os }}
+        run: |
+          commit=$(git rev-parse --short "$commit")
+          echo "cache-key=${runner_os}-${commit}-nqcc" >> $GITHUB_OUTPUT
+
+      - name: Cache build result
+        id: cache-nqcc
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.EXE_PATH }}
+          key: ${{ steps.make-key.outputs.cache-key }}
+
+      # skip building if we get a cache hit
+      - name: Set up OCaml
+        if: steps.cache-nqcc.outputs.cache-hit != 'true'
+        uses: ocaml/setup-ocaml@v2
+        with:
+          ocaml-compiler: 4.14.x
+          # necessary to avoid random errors, see https://github.com/ocaml/setup-ocaml/issues/400
+          dune-cache: false
+
+      - name: Build it
+        if: steps.cache-nqcc.outputs.cache-hit != 'true'
+        run: |
+          opam install . --deps-only
+          opam exec -- dune build
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nqcc-${{inputs.os}}-${{ inputs.chapter }}
+          path: ${{ env.EXE_PATH }}
