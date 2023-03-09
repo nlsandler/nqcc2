@@ -1,0 +1,64 @@
+name: Build and test the compiler
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+      chapter:
+        required: true
+        type: string
+      branch:
+        type: string
+        required: false
+        default: main
+      tests-branch:
+        type: string
+        required: false
+        default: main
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yaml
+    with:
+      chapter: ${{ inputs.chapter }}
+      os: ${{ inputs.os }}
+      branch: ${{ inputs.branch }}
+
+  test:
+    runs-on: ${{ inputs.os }}
+    needs: [build]
+    env:
+      CHAPTER: ${{ inputs.chapter }}
+    steps:
+
+      - name: Check out tests
+        uses: actions/checkout@v4
+        with:
+          repository: nlsandler/writing-a-c-compiler-tests
+          ref:  ${{ inputs.tests-branch }}
+
+      - name: Check out test runner script
+        uses: actions/checkout@v4
+        with:
+          repository: nlsandler/nqcc2
+          ref: ${{ inputs.branch }}
+          sparse-checkout: |
+            .github/run_tests.py
+          sparse-checkout-cone-mode: false
+          path: script
+
+      - name: Download the compiler
+        uses: actions/download-artifact@v4
+        with:
+          name: nqcc-${{inputs.os}}-${{ inputs.chapter }}
+          path: nqcc
+
+      # make NQCC executable
+      - run: chmod u+x nqcc/main.exe
+
+      # Invoke the run_tests.py script to test each intermediate stage
+      - name: Run the tests
+        run: ./script/.github/run_tests.py nqcc/main.exe --chapter "${CHAPTER}" --no-extra-opts
+

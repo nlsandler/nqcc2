@@ -1,0 +1,42 @@
+name: Build and test each chapter
+
+on:
+  workflow_dispatch:
+    inputs:
+      tests-branch:
+        type: string
+        required: false
+        default: main
+
+
+  workflow_call:
+    inputs:
+      tests-branch:
+        type: string
+        required: true
+      # should always be the name of the branch
+      # that holds this version of the workflow file;
+      # pass as input b/c we can't easily get it directly
+      cc-branch:
+        type: string
+        required: true
+
+jobs:
+
+
+  build-and-test:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        chapter: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20a","20"]
+    uses: ./.github/workflows/build_and_test.yaml
+    with:
+      chapter: ${{ matrix.chapter }}
+      os: ${{ matrix.os }}
+      # use inputs.cc-branch if this is a workflow call from other repo,
+      # and ref-name if this is a workflow dispatch; annoyingly
+      # there's no easy way to just get the short ref name
+      # for the current workflow
+      branch: ${{ inputs.cc-branch || github.ref_name }}
+      tests-branch: ${{ inputs.tests-branch }}
