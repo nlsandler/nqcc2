@@ -1,0 +1,70 @@
+name: Build and test the compiler
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        required: true
+        type: string
+      chapter:
+        required: true
+        type: number
+
+jobs:
+  build:
+    uses: nlsandler/nqcc2/.github/workflows/build.yaml@main
+    with:
+      chapter: ${{ inputs.chapter }}
+      os: ${{ inputs.os }}
+
+  test:
+    runs-on: ${{ inputs.os }}
+    needs: [build]
+    env:
+      CHAPTER: ${{ inputs.chapter }}
+    steps:
+
+      - name: Check out tests
+        uses: actions/checkout@v4
+        with:
+          repository: nlsandler/writing-a-c-compiler-tests
+          ref: complete-test-suite # TODO use main once this is merged
+
+      - name: Download the compiler
+        uses: actions/download-artifact@v4
+        with:
+          name: nqcc-${{inputs.os}}-${{ inputs.chapter }}
+          path: nqcc
+
+      # make NQCC executable
+      - run: chmod u+x nqcc/main.exe
+
+      # TODO handle intermediate stages w/in chapters 19, 20
+      - name: Test the lexer
+        if: inputs.chapter < 19
+        run: |
+          ./test_compiler nqcc/main.exe --chapter "$CHAPTER" --stage lex
+
+      - name: Test the parser
+        if: inputs.chapter < 19
+        run: |
+          ./test_compiler nqcc/main.exe --chapter "$CHAPTER" --stage parse
+
+      - name: Test validation
+        if: inputs.chapter < 19 && inputs.chapter > 4
+        run: |
+          ./test_compiler nqcc/main.exe --chapter "$CHAPTER" --stage validate
+
+      - name: Test TACKY generation
+        if: inputs.chapter < 19 && inputs.chapter > 1
+        run: |
+          ./test_compiler nqcc/main.exe --chapter "$CHAPTER" --stage tacky
+
+      - name: Test assembly generation
+        if: inputs.chapter < 19 && inputs.chapter > 1
+        run: |
+          ./test_compiler nqcc/main.exe --chapter "$CHAPTER" --stage codegen
+
+      - name: Test the whole compiler
+        run: ./test_compiler nqcc/main.exe --chapter "$CHAPTER"
+
