@@ -2,9 +2,21 @@ open Batteries
 open Tokens
 
 (* reject disabled extra-credit features (some here, some in parser)*)
-let check_extra_credit = function
+let check_extra_credit tok =
+  let flag_enabled flag = List.mem flag !Settings.extra_credit_flags in
+  match tok with
   | (Ampersand | Pipe | Caret | DoubleLeftBracket | DoubleRightBracket)
-    when not (List.mem Settings.Bitwise !Settings.extra_credit_flags) ->
+    when not (flag_enabled Settings.Bitwise) ->
+      failwith "Unsupported extra-credit feature: bitwise operations"
+  | (DoublePlus | DoubleHyphen) when not (flag_enabled Settings.Increment) ->
+      failwith "Unsupported extra-credit feature: increment/decrement"
+  | (PlusEqual | HyphenEqual | StarEqual | PercentEqual | SlashEqual)
+    when not (flag_enabled Settings.Compound) ->
+      failwith "Unsupported extra-credit feature: compound assignment"
+  | AmpersandEqual | PipeEqual | CaretEqual | DoubleLeftBracketEqual
+  | DoubleRightBracketEqual
+    when not (flag_enabled Settings.Compound && flag_enabled Settings.Bitwise)
+    ->
       failwith "Unsupported extra-credit feature"
   | _ -> ()
 
@@ -21,6 +33,8 @@ let id_to_tok = function
 let rec lex_helper chars =
   match chars with
   | [] -> [] (* we've processed the whole input *)
+  | '<' :: '<' :: '=' :: rest -> DoubleLeftBracketEqual :: lex_helper rest
+  | '>' :: '>' :: '=' :: rest -> DoubleRightBracketEqual :: lex_helper rest
   | '&' :: '&' :: rest -> LogicalAnd :: lex_helper rest
   | '|' :: '|' :: rest -> LogicalOr :: lex_helper rest
   | '=' :: '=' :: rest -> DoubleEqual :: lex_helper rest
@@ -29,6 +43,14 @@ let rec lex_helper chars =
   | '>' :: '=' :: rest -> GreaterOrEqual :: lex_helper rest
   | '<' :: '<' :: rest -> DoubleLeftBracket :: lex_helper rest
   | '>' :: '>' :: rest -> DoubleRightBracket :: lex_helper rest
+  | '+' :: '=' :: rest -> PlusEqual :: lex_helper rest
+  | '-' :: '=' :: rest -> HyphenEqual :: lex_helper rest
+  | '/' :: '=' :: rest -> SlashEqual :: lex_helper rest
+  | '*' :: '=' :: rest -> StarEqual :: lex_helper rest
+  | '%' :: '=' :: rest -> PercentEqual :: lex_helper rest
+  | '&' :: '=' :: rest -> AmpersandEqual :: lex_helper rest
+  | '|' :: '=' :: rest -> PipeEqual :: lex_helper rest
+  | '^' :: '=' :: rest -> CaretEqual :: lex_helper rest
   | '<' :: rest -> LessThan :: lex_helper rest
   | '>' :: rest -> GreaterThan :: lex_helper rest
   | '!' :: rest -> Bang :: lex_helper rest
@@ -39,6 +61,7 @@ let rec lex_helper chars =
   | ')' :: rest -> CloseParen :: lex_helper rest
   | ';' :: rest -> Semicolon :: lex_helper rest
   | '-' :: '-' :: rest -> DoubleHyphen :: lex_helper rest
+  | '+' :: '+' :: rest -> DoublePlus :: lex_helper rest
   | '-' :: rest -> Hyphen :: lex_helper rest
   | '~' :: rest -> Tilde :: lex_helper rest
   | '+' :: rest -> Plus :: lex_helper rest

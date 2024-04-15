@@ -52,8 +52,34 @@ let get_precedence = function
   | T.Pipe -> Some 15
   | T.LogicalAnd -> Some 10
   | T.LogicalOr -> Some 5
-  | T.EqualSign -> Some 1
+  | T.(
+      ( EqualSign | PlusEqual | HyphenEqual | StarEqual | SlashEqual
+      | PercentEqual | AmpersandEqual | CaretEqual | PipeEqual
+      | DoubleLeftBracketEqual | DoubleRightBracketEqual )) ->
+      Some 1
   | _ -> None
+
+let get_compound_operator = function
+  | T.EqualSign -> None
+  | T.PlusEqual -> Some Add
+  | T.HyphenEqual -> Some Subtract
+  | T.SlashEqual -> Some Divide
+  | T.StarEqual -> Some Multiply
+  | T.PercentEqual -> Some Mod
+  | T.AmpersandEqual -> Some BitwiseAnd
+  | T.PipeEqual -> Some BitwiseOr
+  | T.CaretEqual -> Some BitwiseXor
+  | T.DoubleLeftBracketEqual -> Some BitshiftLeft
+  | T.DoubleRightBracketEqual -> Some BitshiftRight
+  | t -> failwith ("Internal error: not an assignment operator: " ^ T.show t)
+
+let is_assignment = function
+  | T.(
+      ( EqualSign | PlusEqual | HyphenEqual | StarEqual | SlashEqual
+      | PercentEqual | AmpersandEqual | CaretEqual | PipeEqual
+      | DoubleLeftBracketEqual | DoubleRightBracketEqual )) ->
+      true
+  | _ -> false
 
 (* parsing grammar symbols *)
 
@@ -77,6 +103,8 @@ let parse_unop tokens =
   | T.Tilde -> Complement
   | T.Hyphen -> Negate
   | T.Bang -> Not
+  | T.DoublePlus -> Incr
+  | T.DoubleHyphen -> Decr
   (* we only call this when we know the next token is a unop *)
   | _ ->
       raise (ParseError "Internal error when parsing unary operator")
@@ -107,19 +135,14 @@ let parse_binop tokens =
       raise (ParseError "Internal error when parsing binary operator")
       [@coverage off]
 
-(* <factor> ::= <int> | <identifier> <unop> <factor> | "(" <exp> ")" *)
-let rec parse_factor tokens =
+(* <primary-exp> ::= <int> | <identifier>  | "(" <exp> ")" *)
+let rec parse_primary_expression tokens =
   let next_token = peek tokens in
   match next_token with
   (* constant *)
   | T.Constant _ -> parse_constant tokens
   (* identifier *)
   | T.Identifier _ -> Var (parse_id tokens)
-  (* unary expression *)
-  | T.Hyphen | T.Tilde | T.Bang ->
-      let operator = parse_unop tokens in
-      let inner_exp = parse_factor tokens in
-      Unary (operator, inner_exp)
   (* parenthesized expression *)
   | T.OpenParen ->
       (* Stream.junk consumes open paren *)
@@ -130,6 +153,34 @@ let rec parse_factor tokens =
   (* errors *)
   | t -> raise_error ~expected:(Name "a factor") ~actual:t
 
+(* <postfix-exp> ::= <primary-exp> { "++" | "--" } *)
+and parse_postfix_exp tokens =
+  let primary = parse_primary_expression tokens in
+  postfix_helper primary tokens
+
+and postfix_helper primary tokens =
+  match peek tokens with
+  | T.DoubleHyphen ->
+      Stream.junk tokens;
+      let decr_exp = PostfixDecr primary in
+      postfix_helper decr_exp tokens
+  | T.DoublePlus ->
+      Stream.junk tokens;
+      let incr_exp = PostfixIncr primary in
+      postfix_helper incr_exp tokens
+  | _ -> primary
+
+(* <factor> ::= <unop> <factor> | <postfix-exp> *)
+and parse_factor tokens =
+  let next_token = peek tokens in
+  match next_token with
+  (* unary expression *)
+  | T.Hyphen | T.Tilde | T.Bang | T.DoublePlus | T.DoubleHyphen ->
+      let operator = parse_unop tokens in
+      let inner_exp = parse_factor tokens in
+      Unary (operator, inner_exp)
+  | _ -> parse_postfix_exp tokens
+
 (* <exp> ::= <factor> | <exp> <binop> <exp> *)
 and parse_expression min_prec tokens =
   let initial_factor = parse_factor tokens in
@@ -137,10 +188,14 @@ and parse_expression min_prec tokens =
   let rec parse_exp_loop left next =
     match get_precedence next with
     | Some prec when prec >= min_prec ->
-        if next = T.EqualSign then
+        if is_assignment next then
           let _ = Stream.junk tokens in
           let right = parse_expression prec tokens in
-          let left = Assignment (left, right) in
+          let left =
+            match get_compound_operator next with
+            | None -> Assignment (left, right)
+            | Some op -> CompoundAssignment (op, left, right)
+          in
           parse_exp_loop left (peek tokens)
         else
           let operator = parse_binop tokens in

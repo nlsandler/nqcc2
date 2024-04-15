@@ -10,18 +10,47 @@ let rec resolve_exp var_map = function
         | _ ->
             failwith
               (Format.asprintf
-                 "Expected expression on left-hand side of assignment \
-                  statement, found %a"
+                 "Expected lvalue on left-hand side of assignment statement, \
+                  found %a"
                  pp_exp left)
       in
       (* recursively process lhs and rhs *)
       Assignment (resolve_exp var_map left, resolve_exp var_map right)
+  | CompoundAssignment (op, left, right) ->
+      (* validate that lhs is an lvalue *)
+      let _ =
+        match left with
+        | Var _ -> ()
+        | _ ->
+            failwith
+              (Format.asprintf
+                 "Expected lvalue on left-hand side of compound assignment \
+                  statement, found %a"
+                 pp_exp left)
+      in
+      (* recursively process lhs and rhs *)
+      CompoundAssignment
+        (op, resolve_exp var_map left, resolve_exp var_map right)
+  | PostfixIncr (Var _ as e) -> PostfixIncr (resolve_exp var_map e)
+  | PostfixIncr e ->
+      failwith
+        ("Operand of postfix expression must be lvalue, found " ^ show_exp e)
+  | PostfixDecr (Var _ as e) -> PostfixDecr (resolve_exp var_map e)
+  | PostfixDecr e ->
+      failwith
+        ("Operand of postfix expression must be lvalue, found " ^ show_exp e)
   | Var v -> (
       (* rename var from map  *)
       try Var (Map.find v var_map)
       with Not_found -> failwith (Printf.sprintf "Undeclared variable %s" v))
   (* recursively process operands for unary and binary *)
-  | Unary (op, e) -> Unary (op, resolve_exp var_map e)
+  | Unary (op, e) ->
+      (* validate prefix ops*)
+      (match (op, e) with
+      | (Incr | Decr), Var _ -> ()
+      | (Incr | Decr), _ -> failwith "operand of ++/-- must be a variable"
+      | _ -> ());
+      Unary (op, resolve_exp var_map e)
   | Binary (op, e1, e2) ->
       Binary (op, resolve_exp var_map e1, resolve_exp var_map e2)
   (* Nothing to do for constant *)

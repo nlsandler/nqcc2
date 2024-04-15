@@ -100,7 +100,15 @@ let extra_credit =
     let doc = "Enable bitwise operations (&, |, ^, <<, >>)" in
     (Settings.Bitwise, Arg.info [ "bitwise" ] ~doc)
   in
-  Arg.(value & vflag_all [] [ bitwise ])
+  let compound =
+    let doc = "Enable compound assignment operations (+=, -=,*=, /=, %=)" in
+    (Settings.Compound, Arg.info [ "compound" ] ~doc)
+  in
+  let increment =
+    let doc = "Enable prefix and postfix increment and decrement (++/--)" in
+    (Settings.Increment, Arg.info [ "increment" ] ~doc)
+  in
+  Arg.(value & vflag_all [] [ bitwise; compound; increment ])
 
 let debug =
   let doc =

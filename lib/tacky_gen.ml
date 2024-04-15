@@ -8,6 +8,7 @@ let convert_op = function
   | Ast.Complement -> T.Complement
   | Ast.Negate -> T.Negate
   | Ast.Not -> T.Not
+  | Incr | Decr -> failwith "internal error: shouldn't handle these here"
 
 let convert_binop = function
   | Ast.Add -> T.Add
@@ -30,11 +31,26 @@ let convert_binop = function
       failwith "Internal error, cannot convert these directly to TACKY binops"
       [@coverage off]
 
+let emit_decr op v =
+  let dst = T.Var (Unique_ids.make_temporary ()) in
+  let instrs =
+    [
+      T.Copy { src = Var v; dst };
+      T.Binary
+        { op = convert_binop op; src1 = Var v; src2 = Constant 1; dst = Var v };
+    ]
+  in
+  (instrs, dst)
+
 (* return list of instructions to evaluate expression a and resulting TACKY value as a pair *)
 let rec emit_tacky_for_exp = function
   (* don't need any instructions to calculate a constant or variable  *)
   | Ast.Constant c -> ([], T.Constant c)
   | Ast.Var v -> ([], T.Var v)
+  | Ast.Unary (Incr, Var v) ->
+      emit_compound_expression Ast.Add v (Ast.Constant 1)
+  | Ast.Unary (Decr, Var v) ->
+      emit_compound_expression Ast.Subtract v (Ast.Constant 1)
   | Ast.Unary (op, inner) -> emit_unary_expression op inner
   | Ast.Binary (And, e1, e2) -> emit_and_expression e1 e2
   | Ast.Binary (Or, e1, e2) -> emit_or_expression e1 e2
@@ -45,7 +61,12 @@ let rec emit_tacky_for_exp = function
         rhs_instructions @ [ T.Copy { src = rhs_result; dst = Var v } ]
       in
       (instructions, Var v)
-  | Ast.Assignment _ -> failwith "Internal error: bad lvalue" [@coverage off]
+  | Ast.CompoundAssignment (op, Var v, rhs) -> emit_compound_expression op v rhs
+  | Ast.PostfixDecr (Var v) -> emit_decr Ast.Subtract v
+  | PostfixIncr (Var v) -> emit_decr Ast.Add v
+  | Ast.Assignment _ | Ast.CompoundAssignment _ | Ast.PostfixDecr _
+  | Ast.PostfixIncr _ ->
+      failwith "Internal error: bad lvalue" [@coverage off]
 
 (* helper functions for individual expression *)
 and emit_unary_expression op inner =
@@ -67,6 +88,15 @@ and emit_binary_expression op e1 e2 =
     eval_v1
     @ eval_v2
     @ [ T.Binary { op = tacky_op; src1 = v1; src2 = v2; dst } ]
+  in
+  (instructions, dst)
+
+and emit_compound_expression op v rhs =
+  let eval_rhs, rhs = emit_tacky_for_exp rhs in
+  let dst = T.Var v in
+  let tacky_op = convert_binop op in
+  let instructions =
+    eval_rhs @ [ T.Binary { op = tacky_op; src1 = dst; src2 = rhs; dst } ]
   in
   (instructions, dst)
 

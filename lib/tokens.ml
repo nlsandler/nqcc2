@@ -16,6 +16,7 @@ type t =
   | Semicolon
   | Hyphen
   | DoubleHyphen
+  | DoublePlus
   | Tilde
   | Plus
   | Star
@@ -36,4 +37,14 @@ type t =
   | LessOrEqual
   | GreaterOrEqual
   | EqualSign (* = *)
+  | PlusEqual (* += *)
+  | HyphenEqual (* -= *)
+  | StarEqual (* *= *)
+  | SlashEqual (* /= *)
+  | PercentEqual (* %= *)
+  | AmpersandEqual (* &= *)
+  | PipeEqual (* |= *)
+  | CaretEqual (* ^= *)
+  | DoubleLeftBracketEqual (* <<= *)
+  | DoubleRightBracketEqual (* >>= *)
 [@@deriving show]
