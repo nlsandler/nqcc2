@@ -52,6 +52,7 @@ let get_precedence = function
   | T.Pipe -> Some 15
   | T.LogicalAnd -> Some 10
   | T.LogicalOr -> Some 5
+  | T.QuestionMark -> Some 3
   | T.(
       ( EqualSign | PlusEqual | HyphenEqual | StarEqual | SlashEqual
       | PercentEqual | AmpersandEqual | CaretEqual | PipeEqual
@@ -181,7 +182,14 @@ and parse_factor tokens =
       Unary (operator, inner_exp)
   | _ -> parse_postfix_exp tokens
 
-(* <exp> ::= <factor> | <exp> <binop> <exp> *)
+(* "?" <exp> ":" *)
+and parse_conditional_middle tokens =
+  let _ = expect QuestionMark tokens in
+  let e = parse_expression 0 tokens in
+  let _ = expect Colon tokens in
+  e
+
+(* <exp> ::= <factor> | <exp> <binop> <exp> | <exp> "?" <exp> ":" <exp> *)
 and parse_expression min_prec tokens =
   let initial_factor = parse_factor tokens in
   let next_token = peek tokens in
@@ -195,6 +203,14 @@ and parse_expression min_prec tokens =
             match get_compound_operator next with
             | None -> Assignment (left, right)
             | Some op -> CompoundAssignment (op, left, right)
+          in
+          parse_exp_loop left (peek tokens)
+        else if next = T.QuestionMark then
+          let middle = parse_conditional_middle tokens in
+          let right = parse_expression prec tokens in
+          let left =
+            Conditional
+              { condition = left; then_result = middle; else_result = right }
           in
           parse_exp_loop left (peek tokens)
         else
@@ -219,9 +235,14 @@ let parse_declaration tokens =
   | other ->
       raise_error ~expected:(Name "An initializer or semicolon") ~actual:other
 
-(* <statement> ::= "return" <exp> ";" | <exp> ";" | ";" *)
-let parse_statement tokens =
+(* <statement> ::= "return" <exp> ";"
+                 | <exp> ";"
+                 | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+                 | ";"
+*)
+let rec parse_statement tokens =
   match peek tokens with
+  | T.KWIf -> parse_if_statement tokens
   | T.KWReturn ->
       (* consume return keyword *)
       let _ = Stream.junk tokens in
@@ -236,6 +257,23 @@ let parse_statement tokens =
       let exp = parse_expression 0 tokens in
       expect T.Semicolon tokens;
       Expression exp
+
+(* helper functions to parse individual statements *)
+and parse_if_statement tokens =
+  let _ = expect KWIf tokens in
+  let _ = expect OpenParen tokens in
+  let condition = parse_expression 0 tokens in
+  let _ = expect CloseParen tokens in
+  let then_clause = parse_statement tokens in
+  let else_clause =
+    match peek tokens with
+    | KWElse ->
+        (* there is an else clause - consume the else keyword *)
+        let _ = Stream.junk tokens in
+        Some (parse_statement tokens)
+    | _ -> None
+  in
+  If { condition; then_clause; else_clause }
 
 (* <block-item> ::= <statement> | <declaration> *)
 let parse_block_item tokens =

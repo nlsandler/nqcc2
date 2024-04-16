@@ -33,12 +33,23 @@ type exp =
   | CompoundAssignment of binary_operator * exp * exp
   | PostfixIncr of exp
   | PostfixDecr of exp
+  | Conditional of { condition : exp; then_result : exp; else_result : exp }
 [@@deriving show]
 
 type declaration = Declaration of { name : string; init : exp option }
 [@@deriving show]
 
-type statement = Return of exp | Expression of exp | Null [@@deriving show]
+type statement =
+  | Return of exp
+  | Expression of exp
+  | If of {
+      condition : exp;
+      then_clause : statement;
+      else_clause : statement option;
+    }
+  | Null
+[@@deriving show]
+
 type block_item = S of statement | D of declaration [@@deriving show]
 
 type function_definition =

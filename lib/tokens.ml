@@ -8,6 +8,8 @@ type t =
   | KWInt
   | KWReturn
   | KWVoid
+  | KWIf
+  | KWElse
   (* punctuation *)
   | OpenParen
   | CloseParen
@@ -47,4 +49,6 @@ type t =
   | CaretEqual (* ^= *)
   | DoubleLeftBracketEqual (* <<= *)
   | DoubleRightBracketEqual (* >>= *)
+  | QuestionMark
+  | Colon
 [@@deriving show]

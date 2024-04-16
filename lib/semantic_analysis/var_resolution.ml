@@ -43,7 +43,7 @@ let rec resolve_exp var_map = function
       (* rename var from map  *)
       try Var (Map.find v var_map)
       with Not_found -> failwith (Printf.sprintf "Undeclared variable %s" v))
-  (* recursively process operands for unary and binary *)
+  (* recursively process operands for unary, binary, and conditional *)
   | Unary (op, e) ->
       (* validate prefix ops*)
       (match (op, e) with
@@ -53,6 +53,13 @@ let rec resolve_exp var_map = function
       Unary (op, resolve_exp var_map e)
   | Binary (op, e1, e2) ->
       Binary (op, resolve_exp var_map e1, resolve_exp var_map e2)
+  | Conditional { condition; then_result; else_result } ->
+      Conditional
+        {
+          condition = resolve_exp var_map condition;
+          then_result = resolve_exp var_map then_result;
+          else_result = resolve_exp var_map else_result;
+        }
   (* Nothing to do for constant *)
   | Constant _ as c -> c
 
@@ -67,9 +74,16 @@ let resolve_declaration var_map (Declaration { name; init }) =
     (* return new map and resolved declaration *)
     (new_map, Declaration { name = unique_name; init = resolved_init })
 
-let resolve_statement var_map = function
+let rec resolve_statement var_map = function
   | Return e -> Return (resolve_exp var_map e)
   | Expression e -> Expression (resolve_exp var_map e)
+  | If { condition; then_clause; else_clause } ->
+      If
+        {
+          condition = resolve_exp var_map condition;
+          then_clause = resolve_statement var_map then_clause;
+          else_clause = Option.map (resolve_statement var_map) else_clause;
+        }
   | Null -> Null
 
 let resolve_block_item var_map = function
