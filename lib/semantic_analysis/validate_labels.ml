@@ -16,7 +16,10 @@ let rec collect_labels_from_statement (defined, used) = function
       | None -> (defined', used'))
   | Compound (Block block_items) ->
       List.fold_left collect_labels_from_block_item (defined, used) block_items
-  | Return _ | Null | Expression _ -> (defined, used)
+  | While { body; _ } -> collect_labels_from_statement (defined, used) body
+  | DoWhile { body; _ } -> collect_labels_from_statement (defined, used) body
+  | For { body; _ } -> collect_labels_from_statement (defined, used) body
+  | Return _ | Null | Expression _ | Break _ | Continue _ -> (defined, used)
 
 and collect_labels_from_block_item lbls = function
   | Ast.S stmt -> collect_labels_from_statement lbls stmt

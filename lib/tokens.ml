@@ -11,6 +11,11 @@ type t =
   | KWIf
   | KWElse
   | KWGoto
+  | KWDo
+  | KWWhile
+  | KWFor
+  | KWBreak
+  | KWContinue
   (* punctuation *)
   | OpenParen
   | CloseParen
