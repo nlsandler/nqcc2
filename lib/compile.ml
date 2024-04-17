@@ -16,6 +16,7 @@ let compile stage src_file =
     else
       (* Semantic analysis *)
       let validated_ast = Var_resolution.resolve ast in
+      Validate_labels.validate_labels validated_ast;
       if stage = Settings.Validate then ()
       else
         (* Convert the AST to TACKY *)

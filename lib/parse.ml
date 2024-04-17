@@ -238,21 +238,34 @@ let parse_declaration tokens =
 (* <statement> ::= "return" <exp> ";"
                  | <exp> ";"
                  | "if" "(" <exp> ")" <statement> [ "else" <statement> ]
+                 | <label> ":" <statement>
+                 | "goto" <label> ";"
                  | ";"
 *)
 let rec parse_statement tokens =
-  match peek tokens with
-  | T.KWIf -> parse_if_statement tokens
-  | T.KWReturn ->
+  match Stream.npeek 2 tokens with
+  | T.KWIf :: _ -> parse_if_statement tokens
+  | T.KWReturn :: _ ->
       (* consume return keyword *)
       let _ = Stream.junk tokens in
       let exp = parse_expression 0 tokens in
       let _ = expect T.Semicolon tokens in
       Return exp
-  | T.Semicolon ->
+  | T.Semicolon :: _ ->
       (* consume semicolon *)
       let _ = Stream.junk tokens in
       Null
+  | KWGoto :: _ ->
+      Stream.junk tokens;
+      let lbl = parse_id tokens in
+      expect T.Semicolon tokens;
+      Goto lbl
+  | [ T.Identifier lbl; T.Colon ] ->
+      (* consume label and colon *)
+      Stream.junk tokens;
+      Stream.junk tokens;
+      let stmt = parse_statement tokens in
+      LabeledStatement (lbl, stmt)
   | _ ->
       let exp = parse_expression 0 tokens in
       expect T.Semicolon tokens;

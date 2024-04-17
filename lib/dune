@@ -18,6 +18,7 @@
   tokens
   settings
   unique_ids
+  validate_labels
   var_resolution)
  (libraries batteries ppx_deriving ppx_inline_test camlp-streams)
  (preprocess

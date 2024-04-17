@@ -172,6 +172,9 @@ let rec emit_tacky_for_statement = function
       eval_exp
   | Ast.If { condition; then_clause; else_clause } ->
       emit_tacky_for_if_statement condition then_clause else_clause
+  | Ast.LabeledStatement (lbl, stmt) ->
+      T.Label lbl :: emit_tacky_for_statement stmt
+  | Ast.Goto lbl -> [ T.Jump lbl ]
   | Ast.Null -> []
 
 and emit_tacky_for_block_item = function

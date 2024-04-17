@@ -48,6 +48,8 @@ type statement =
       else_clause : statement option;
     }
   | Null
+  | LabeledStatement of string * statement
+  | Goto of string
 [@@deriving show]
 
 type block_item = S of statement | D of declaration [@@deriving show]

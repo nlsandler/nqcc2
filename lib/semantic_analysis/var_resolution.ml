@@ -84,6 +84,9 @@ let rec resolve_statement var_map = function
           then_clause = resolve_statement var_map then_clause;
           else_clause = Option.map (resolve_statement var_map) else_clause;
         }
+  | LabeledStatement (lbl, stmt) ->
+      LabeledStatement (lbl, resolve_statement var_map stmt)
+  | Goto lbl -> Goto lbl
   | Null -> Null
 
 let resolve_block_item var_map = function

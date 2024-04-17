@@ -108,7 +108,11 @@ let extra_credit =
     let doc = "Enable prefix and postfix increment and decrement (++/--)" in
     (Settings.Increment, Arg.info [ "increment" ] ~doc)
   in
-  Arg.(value & vflag_all [] [ bitwise; compound; increment ])
+  let goto =
+    let doc = "Enable goto and labeled statements" in
+    (Settings.Goto, Arg.info [ "goto" ] ~doc)
+  in
+  Arg.(value & vflag_all [] [ bitwise; compound; increment; goto ])
 
 let debug =
   let doc =

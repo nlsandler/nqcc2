@@ -10,6 +10,7 @@ type t =
   | KWVoid
   | KWIf
   | KWElse
+  | KWGoto
   (* punctuation *)
   | OpenParen
   | CloseParen
