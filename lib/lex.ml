@@ -20,6 +20,8 @@ let check_extra_credit tok =
       failwith "Unsupported extra-credit feature"
   | KWGoto when not (flag_enabled Settings.Goto) ->
       failwith "Unsupported extra-credit feature: goto"
+  | (KWSwitch | KWCase | KWDefault) when not (flag_enabled Settings.Switch) ->
+      failwith "Unsupported extra-credit feature: switch"
   | _ -> ()
 
 (* regular expressions for tokens *)
@@ -38,6 +40,9 @@ let id_to_tok = function
   | "for" -> KWFor
   | "break" -> KWBreak
   | "continue" -> KWContinue
+  | "switch" -> KWSwitch
+  | "case" -> KWCase
+  | "default" -> KWDefault
   | other -> Identifier other
 
 let rec lex_helper chars =

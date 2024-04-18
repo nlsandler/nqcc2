@@ -6,6 +6,7 @@
   ast
   assembly
   codegen
+  collect_switch_cases
   compile
   emit
   instruction_fixup

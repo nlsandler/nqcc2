@@ -135,6 +135,15 @@ let rec resolve_statement var_map = function
   | Compound block ->
       let new_variable_map = copy_variable_map var_map in
       Compound (resolve_block new_variable_map block)
+  | Switch s ->
+      Switch
+        {
+          s with
+          control = resolve_exp var_map s.control;
+          body = resolve_statement var_map s.body;
+        }
+  | Case (v, stmt, id) -> Case (v, resolve_statement var_map stmt, id)
+  | Default (stmt, id) -> Default (resolve_statement var_map stmt, id)
   | (Null | Break _ | Continue _) as s -> s
 
 and resolve_block_item var_map = function

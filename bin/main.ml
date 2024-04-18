@@ -112,7 +112,11 @@ let extra_credit =
     let doc = "Enable goto and labeled statements" in
     (Settings.Goto, Arg.info [ "goto" ] ~doc)
   in
-  Arg.(value & vflag_all [] [ bitwise; compound; increment; goto ])
+  let switch =
+    let doc = "Enable switch statements" in
+    (Settings.Switch, Arg.info [ "switch" ] ~doc)
+  in
+  Arg.(value & vflag_all [] [ bitwise; compound; increment; goto; switch ])
 
 let debug =
   let doc =

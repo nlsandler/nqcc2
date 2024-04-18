@@ -21,10 +21,14 @@ let compile stage src_file =
       Validate_labels.validate_labels resolved_ast;
       (* 3. annotate loops and break/continue statements *)
       let validated_ast = Label_loops.label_loops resolved_ast in
+      (* 4. Collect cases in switch statements *)
+      let validated_ast2 =
+        Collect_switch_cases.analyze_switches validated_ast
+      in
       if stage = Settings.Validate then ()
       else
         (* Convert the AST to TACKY *)
-        let tacky = Tacky_gen.gen validated_ast in
+        let tacky = Tacky_gen.gen validated_ast2 in
         (* print to file (src filename with .debug.tacky extension) if debug is enabled*)
         Tacky_print.debug_print_tacky src_file tacky;
         if stage = Settings.Tacky then ()

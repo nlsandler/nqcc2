@@ -19,6 +19,9 @@ let rec collect_labels_from_statement (defined, used) = function
   | While { body; _ } -> collect_labels_from_statement (defined, used) body
   | DoWhile { body; _ } -> collect_labels_from_statement (defined, used) body
   | For { body; _ } -> collect_labels_from_statement (defined, used) body
+  | Switch { body; _ } -> collect_labels_from_statement (defined, used) body
+  | Case (_, stmt, _) -> collect_labels_from_statement (defined, used) stmt
+  | Default (stmt, _) -> collect_labels_from_statement (defined, used) stmt
   | Return _ | Null | Expression _ | Break _ | Continue _ -> (defined, used)
 
 and collect_labels_from_block_item lbls = function

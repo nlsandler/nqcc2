@@ -188,6 +188,10 @@ let rec emit_tacky_for_statement = function
       emit_tacky_for_while_loop condition body id
   | Ast.For { init; condition; post; body; id } ->
       emit_tacky_for_for_loop init condition post body id
+  | Case (_, stmt, id) -> T.Label id :: emit_tacky_for_statement stmt
+  | Default (stmt, id) -> T.Label id :: emit_tacky_for_statement stmt
+  | Switch { control; body; id; cases } ->
+      emit_tacky_for_switch control body id cases
   | Ast.Null -> []
 
 and emit_tacky_for_block_item = function
@@ -239,6 +243,49 @@ and emit_tacky_for_while_loop condition body id =
   (T.Label cont_label :: eval_condition)
   @ (T.JumpIfZero (c, br_label) :: emit_tacky_for_statement body)
   @ [ T.Jump cont_label; T.Label br_label ]
+
+(* c = <evaluate condition>
+ * cmp = c == case1
+ * JumpIfNotZero(cmp, label1)
+ * cmp = c == case2
+ * JumpIfNotZero(cmp, label2)
+ * ...
+ * Jump(default_label) // if there's a default
+ * Jump(break_label) // so we jump over body if there's no matching case or default
+ * <statement>
+ * Label(break_label)
+ *
+ * Could improve on this by adding a JumpIfEqual(v1, v2, label) TACKY instruction,
+ * but I want to avoid changing TACKY here
+ *)
+and emit_tacky_for_switch control body id cases =
+  let br_label = break_label id in
+  let eval_control, c = emit_tacky_for_exp control in
+  let cmp_result = T.Var (Unique_ids.make_temporary ()) in
+  let emit_tacky_for_case (key, id) =
+    match key with
+    (* case statement - emit tacky now *)
+    | Some i ->
+        [
+          T.Binary { op = Equal; src1 = Constant i; src2 = c; dst = cmp_result };
+          JumpIfNotZero (cmp_result, id);
+        ]
+        (* default statement - handle later*)
+    | None -> []
+  in
+  let jump_to_cases = List.concat_map emit_tacky_for_case cases in
+  let default_tacky =
+    if List.mem_assoc None cases then
+      let default_id = List.assoc None cases in
+      [ T.Jump default_id ]
+    else []
+  in
+  eval_control
+  @ jump_to_cases
+  @ default_tacky
+  @ [ T.Jump br_label ]
+  @ emit_tacky_for_statement body
+  @ [ Label br_label ]
 
 and emit_tacky_for_for_loop init condition post body id =
   (* generate some labels *)

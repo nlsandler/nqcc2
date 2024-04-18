@@ -16,6 +16,9 @@ type t =
   | KWFor
   | KWBreak
   | KWContinue
+  | KWSwitch
+  | KWCase
+  | KWDefault
   (* punctuation *)
   | OpenParen
   | CloseParen

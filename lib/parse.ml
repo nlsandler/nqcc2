@@ -292,6 +292,18 @@ let rec parse_statement tokens =
       let lbl = parse_id tokens in
       expect T.Semicolon tokens;
       Goto lbl
+  | KWSwitch :: _ -> parse_switch_statement tokens
+  | KWCase :: _ ->
+      Stream.junk tokens;
+      let case_val = parse_expression 0 tokens in
+      expect T.Colon tokens;
+      let stmt = parse_statement tokens in
+      Case (case_val, stmt, "")
+  | KWDefault :: _ ->
+      Stream.junk tokens;
+      expect T.Colon tokens;
+      let stmt = parse_statement tokens in
+      Default (stmt, "")
   | [ T.Identifier lbl; T.Colon ] ->
       (* consume label and colon *)
       Stream.junk tokens;
@@ -348,6 +360,15 @@ and parse_for_loop tokens =
   let post = parse_optional_expression T.CloseParen tokens in
   let body = parse_statement tokens in
   For { init; condition; post; body; id = "" }
+
+(* "switch" "(" <exp> ")" <statement> *)
+and parse_switch_statement tokens =
+  expect KWSwitch tokens;
+  expect OpenParen tokens;
+  let control = parse_expression 0 tokens in
+  expect CloseParen tokens;
+  let body = parse_statement tokens in
+  Switch { control; body; id = ""; cases = [] }
 
 (* <block-item> ::= <statement> | <declaration> *)
 and parse_block_item tokens =

@@ -65,6 +65,17 @@ type statement =
   | Null
   | LabeledStatement of string * statement
   | Goto of string
+  | Switch of {
+      control : exp;
+      body : statement;
+      id : string;
+      cases : (int option * string) list;
+    }
+  | Case of
+      exp (* exp must be constant; validate during semantic analysis *)
+      * statement
+      * string
+  | Default of statement * string
 [@@deriving show]
 
 and block_item = S of statement | D of declaration [@@deriving show]
