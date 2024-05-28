@@ -1,4 +1,24 @@
-type reg = AX | CX | DX | DI | SI | R8 | R9 | R10 | R11 | SP
+type reg =
+  | AX
+  | CX
+  | DX
+  | DI
+  | SI
+  | R8
+  | R9
+  | R10
+  | R11
+  | SP
+  | XMM0
+  | XMM1
+  | XMM2
+  | XMM3
+  | XMM4
+  | XMM5
+  | XMM6
+  | XMM7
+  | XMM14
+  | XMM15
 
 type operand =
   | Imm of int64
@@ -7,12 +27,13 @@ type operand =
   | Stack of int
   | Data of string
 
-type unary_operator = Neg | Not
+type unary_operator = Neg | Not | ShrOneOp
 
 type binary_operator =
   | Add
   | Sub
   | Mult
+  | DivDouble
   | And
   | Or
   | Xor
@@ -22,12 +43,14 @@ type binary_operator =
   | Shl
 
 type cond_code = E | NE | G | GE | L | LE | A | AE | B | BE
-type asm_type = Longword | Quadword
+type asm_type = Longword | Quadword | Double
 
 type instruction =
   | Mov of asm_type * operand * operand
   | Movsx of operand * operand
   | MovZeroExtend of operand * operand
+  | Cvttsd2si of asm_type * operand * operand
+  | Cvtsi2sd of asm_type * operand * operand
   | Unary of unary_operator * asm_type * operand
   | Binary of {
       op : binary_operator;
@@ -57,6 +80,11 @@ type top_level =
       name : string;
       alignment : int;
       global : bool;
+      init : Initializers.static_init;
+    }
+  | StaticConstant of {
+      name : string;
+      alignment : int;
       init : Initializers.static_init;
     }
 
