@@ -118,13 +118,21 @@ and emit_cast_expression target_type inner =
     (eval_inner @ [ cast_instruction ], dst)
 
 and get_cast_instruction src dst src_t dst_t =
-  (* NOTE: assumes src and dst have different types *)
-  if Type_utils.get_size dst_t = Type_utils.get_size src_t then
-    T.Copy { src; dst }
-  else if Type_utils.get_size dst_t < Type_utils.get_size src_t then
-    Truncate { src; dst }
-  else if Type_utils.is_signed src_t then T.SignExtend { src; dst }
-  else T.ZeroExtend { src; dst }
+  match (dst_t, src_t) with
+  | Double, _ ->
+      if Type_utils.is_signed src_t then T.IntToDouble { src; dst }
+      else T.UIntToDouble { src; dst }
+  | _, Double ->
+      if Type_utils.is_signed dst_t then T.DoubleToInt { src; dst }
+      else T.DoubleToUInt { src; dst }
+  | _ ->
+      (* Cast between int types. NOTE: assumes src and dst have different types *)
+      if Type_utils.get_size dst_t = Type_utils.get_size src_t then
+        T.Copy { src; dst }
+      else if Type_utils.get_size dst_t < Type_utils.get_size src_t then
+        Truncate { src; dst }
+      else if Type_utils.is_signed src_t then T.SignExtend { src; dst }
+      else T.ZeroExtend { src; dst }
 
 and emit_binary_expression t op e1 e2 =
   let eval_v1, v1 = emit_tacky_for_exp e1 in

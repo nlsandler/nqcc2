@@ -27,6 +27,10 @@ type instruction =
   | Return of tacky_val
   | SignExtend of { src : tacky_val; dst : tacky_val }
   | ZeroExtend of { src : tacky_val; dst : tacky_val }
+  | DoubleToInt of { src : tacky_val; dst : tacky_val }
+  | IntToDouble of { src : tacky_val; dst : tacky_val }
+  | DoubleToUInt of { src : tacky_val; dst : tacky_val }
+  | UIntToDouble of { src : tacky_val; dst : tacky_val }
   | Truncate of { src : tacky_val; dst : tacky_val }
   | Unary of { op : unary_operator; src : tacky_val; dst : tacky_val }
   | Binary of {

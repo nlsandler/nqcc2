@@ -15,6 +15,7 @@ let convert_to e target_type =
 
 let get_common_type t1 t2 =
   if t1 = t2 then t1
+  else if t1 = Types.Double || t2 = Double then Double
   else if get_size t1 = get_size t2 then if is_signed t1 then t2 else t1
   else if get_size t1 > get_size t2 then t1
   else t2
@@ -52,6 +53,8 @@ and typecheck_unary op inner =
   let unary_exp = T.Unary (op, typed_inner) in
   match op with
   | Not -> set_type unary_exp Int
+  | Complement when get_type typed_inner = Double ->
+      failwith "Can't apply bitwise complement to double"
   | _ -> set_type unary_exp (get_type typed_inner)
 
 and typecheck_postfix_decr e =
@@ -73,9 +76,12 @@ and typecheck_binary op e1 e2 =
   let typed_e2 = typecheck_exp e2 in
   match op with
   | BitshiftLeft | BitshiftRight ->
-      (* Don't perform usual arithmetic conversions; result has type of left operand *)
-      let typed_binexp = T.Binary (op, typed_e1, typed_e2) in
-      set_type typed_binexp (get_type typed_e1)
+      if get_type typed_e1 = Double || get_type typed_e2 = Double then
+        failwith "Both operands of bit shift must have integer type"
+      else
+        (* Don't perform usual arithmetic conversions; result has type of left operand *)
+        let typed_binexp = T.Binary (op, typed_e1, typed_e2) in
+        set_type typed_binexp (get_type typed_e1)
   | And | Or ->
       let typed_binexp = T.Binary (op, typed_e1, typed_e2) in
       set_type typed_binexp Int
@@ -87,6 +93,8 @@ and typecheck_binary op e1 e2 =
       let converted_e2 = convert_to typed_e2 common_type in
       let binary_exp = T.Binary (op, converted_e1, converted_e2) in
       match op with
+      | (Mod | BitwiseAnd | BitwiseOr | BitwiseXor) when common_type = Double ->
+          failwith "Can't apply % or bitwise operation to double"
       | Add | Subtract | Multiply | Divide | Mod | BitwiseAnd | BitwiseOr
       | BitwiseXor ->
           set_type binary_exp common_type
@@ -105,6 +113,15 @@ and typecheck_compound_assignment op lhs rhs =
   let lhs_type = get_type typed_lhs in
   let typed_rhs = typecheck_exp rhs in
   let rhs_type = get_type typed_rhs in
+  let _ =
+    match op with
+    | (Mod | BitwiseAnd | BitwiseOr | BitwiseXor | BitshiftLeft | BitshiftRight)
+      when lhs_type = Double || rhs_type = Double ->
+        failwith
+          (Printf.sprintf "Operand %s doesn't support double operands"
+             (U.show_binary_operator op))
+    | _ -> ()
+  in
   let result_t, converted_rhs =
     if op = BitshiftLeft || op = BitshiftRight then (lhs_type, typed_rhs)
     else
@@ -168,6 +185,7 @@ let to_static_init var_type = function
         | ConstLong l -> Initializers.LongInit l
         | ConstUInt u -> Initializers.UIntInit u
         | ConstULong ul -> Initializers.ULongInit ul
+        | ConstDouble d -> Initializers.DoubleInit d
       in
       Symbols.Initial init_val
   | _ -> failwith "Non-constant initializer on static variable"
@@ -194,17 +212,25 @@ and typecheck_statement ret_type = function
   | LabeledStatement (l, s) ->
       LabeledStatement (l, typecheck_statement ret_type s)
   | Case (e, s, id) ->
-      (* NOTE: e must be converted to type of controlling expression in enclosing switch; we'll do that during collect_switch_cases pass *)
-      Case (typecheck_exp e, typecheck_statement ret_type s, id)
+      let typed_e = typecheck_exp e in
+      if get_type typed_e = Double then
+        failwith "Case expression cannot be double"
+      else
+        (* NOTE: e must be converted to type of controlling expression in enclosing switch; we'll do that during collect_switch_cases pass *)
+        Case (typecheck_exp e, typecheck_statement ret_type s, id)
   | Default (s, id) -> Default (typecheck_statement ret_type s, id)
   | Switch s ->
-      Switch
-        {
-          control = typecheck_exp s.control;
-          body = typecheck_statement ret_type s.body;
-          id = s.id;
-          cases = s.cases;
-        }
+      let typed_control = typecheck_exp s.control in
+      if get_type typed_control = Double then
+        failwith "Controlling expression in switch cannot be a double"
+      else
+        Switch
+          {
+            control = typed_control;
+            body = typecheck_statement ret_type s.body;
+            id = s.id;
+            cases = s.cases;
+          }
   | Compound block -> Compound (typecheck_block ret_type block)
   | While { condition; body; id } ->
       While

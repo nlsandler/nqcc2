@@ -5,6 +5,7 @@ type static_init =
   | LongInit of Int64.t
   | UIntInit of UInt32.t
   | ULongInit of UInt64.t
+  | DoubleInit of Float.t
 
 val pp_static_init : Format.formatter -> static_init -> unit
 val show_static_init : static_init -> string

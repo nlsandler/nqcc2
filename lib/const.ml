@@ -7,6 +7,7 @@ type t =
   | ConstLong of Int64.t
   | ConstUInt of UInt32.t
   | ConstULong of UInt64.t
+  | ConstDouble of Float.t
 [@@deriving show]
 
 [@@@coverage on]
@@ -19,3 +20,4 @@ let type_of_const = function
   | ConstLong _ -> Types.Long
   | ConstUInt _ -> Types.UInt
   | ConstULong _ -> Types.ULong
+  | ConstDouble _ -> Types.Double
