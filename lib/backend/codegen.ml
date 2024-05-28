@@ -89,6 +89,51 @@ let convert_cond_code signed = function
   | Tacky.LessOrEqual -> if signed then Assembly.LE else Assembly.BE
   | _ -> failwith "Internal error: not a condition code" [@coverage off]
 
+(* Helper function for double comparisons w/ support for NaN *)
+let convert_dbl_comparison op dst_t asm_src1 asm_src2 asm_dst =
+  let cond_code = convert_cond_code false op in
+  (* If op is A or AE, can perform usual comparisons;
+     * these are true only if some flags are 0, so they'll be false for unordered results.
+       * If op is B or BE, just flip operands and use A or AE instead.
+     * If op is E or NE, need to check for parity afterwards *)
+  let cond_code, asm_src1, asm_src2 =
+    match cond_code with
+    | B -> (Assembly.A, asm_src2, asm_src1)
+    | BE -> (AE, asm_src2, asm_src1)
+    | _ -> (cond_code, asm_src1, asm_src2)
+  in
+  let instrs =
+    Assembly.
+      [
+        Cmp (Double, asm_src2, asm_src1);
+        Mov (dst_t, zero, asm_dst);
+        SetCC (cond_code, asm_dst);
+      ]
+  in
+  let parity_instrs =
+    match cond_code with
+    | Assembly.E ->
+        (* zero out destination if parity flag is set,
+         * indicating unordered result
+         *)
+        Assembly.
+          [
+            Mov (dst_t, zero, Reg R9);
+            SetCC (NP, Reg R9);
+            Binary { op = And; t = dst_t; src = Reg R9; dst = asm_dst };
+          ]
+    | Assembly.NE ->
+        (* set destination to 1 if parity flag is set, indicating ordered result *)
+        Assembly.
+          [
+            Mov (dst_t, zero, Reg R9);
+            SetCC (P, Reg R9);
+            Binary { op = Or; t = dst_t; src = Reg R9; dst = asm_dst };
+          ]
+    | _ -> []
+  in
+  instrs @ parity_instrs
+
 let classify_parameters tacky_vals =
   let process_one_param (int_reg_args, dbl_reg_args, stack_args) v =
     let operand = convert_val v in
@@ -235,16 +280,20 @@ let convert_instruction = function
       (* Relational operator *)
       | Equal | NotEqual | GreaterThan | GreaterOrEqual | LessThan | LessOrEqual
         ->
-          let signed =
-            if src_t = Double then false
-            else Type_utils.is_signed (tacky_type src1)
-          in
-          let cond_code = convert_cond_code signed op in
-          [
-            Cmp (src_t, asm_src2, asm_src1);
-            Mov (dst_t, zero, asm_dst);
-            SetCC (cond_code, asm_dst);
-          ]
+          if
+            src_t = Double && List.mem Settings.Nan !Settings.extra_credit_flags
+          then convert_dbl_comparison op dst_t asm_src1 asm_src2 asm_dst
+          else
+            let signed =
+              if src_t = Double then false
+              else Type_utils.is_signed (tacky_type src1)
+            in
+            let cond_code = convert_cond_code signed op in
+            [
+              Cmp (src_t, asm_src2, asm_src1);
+              Mov (dst_t, zero, asm_dst);
+              SetCC (cond_code, asm_dst);
+            ]
       (* Division/modulo *)
       | (Divide | Mod) when src_t <> Double ->
           let result_reg = if op = Divide then Assembly.AX else DX in

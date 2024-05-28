@@ -11,7 +11,7 @@ type stage =
 type target = OS_X | Linux
 
 (* Control which extra-credit features are enabled (to test the test suite) *)
-type extra_credit = Bitwise | Compound | Increment | Goto | Switch
+type extra_credit = Bitwise | Compound | Increment | Goto | Switch | Nan
 
 let platform = ref OS_X (* default to OS X *)
 let extra_credit_flags = ref []
