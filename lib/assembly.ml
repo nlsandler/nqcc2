@@ -42,7 +42,7 @@ type binary_operator =
   | Shr
   | Shl
 
-type cond_code = E | NE | G | GE | L | LE | A | AE | B | BE
+type cond_code = E | NE | G | GE | L | LE | A | AE | B | BE | P | NP
 type asm_type = Longword | Quadword | Double
 
 type instruction =

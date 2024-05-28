@@ -134,7 +134,11 @@ let extra_credit =
     let doc = "Enable switch statements" in
     (Settings.Switch, Arg.info [ "switch" ] ~doc)
   in
-  Arg.(value & vflag_all [] [ bitwise; compound; increment; goto; switch ])
+  let nan =
+    let doc = "Enable support for nan" in
+    (Settings.Nan, Arg.info [ "nan" ] ~doc)
+  in
+  Arg.(value & vflag_all [] [ bitwise; compound; increment; goto; switch; nan ])
 
 let debug =
   let doc =
