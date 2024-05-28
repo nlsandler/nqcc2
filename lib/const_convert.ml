@@ -20,6 +20,7 @@ end
 module type Castable = sig
   type t
 
+  val to_float : t -> float
   val to_int32 : t -> int32
   val to_int64 : t -> int64
 end
@@ -31,6 +32,7 @@ module IntCastEvaluator (C : Castable) = struct
     | UInt -> ConstUInt (v |> C.to_int64 |> UInt32.of_int64)
     | Long -> ConstLong (C.to_int64 v)
     | ULong -> ConstULong (v |> C.to_int64 |> UInt64.of_int64)
+    | Double -> ConstDouble (C.to_float v)
     | FunType _ ->
         failwith "Internal error: cannot cast constant to function type"
         [@coverage off]
@@ -56,3 +58,12 @@ let const_convert target_type = function
   | ConstUInt ui -> UIntCaster.cast ui target_type
   | ConstLong l -> LongCaster.cast l target_type
   | ConstULong ul -> ULongCaster.cast ul target_type
+  | ConstDouble d -> (
+      match target_type with
+      | Double -> ConstDouble d
+      | ULong ->
+          let bi = Big_int.of_float d in
+          ConstULong (Big_int.uint64_of_big_int bi)
+      | _ ->
+          let i64 = Int64.of_float d in
+          LongCaster.cast i64 target_type)
