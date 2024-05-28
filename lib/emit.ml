@@ -128,6 +128,8 @@ let show_cond_code = function
   | AE -> "ae"
   | B -> "b"
   | BE -> "be"
+  | P -> "p"
+  | NP -> "np"
 
 let emit_instruction chan = function
   | Mov (t, src, dst) ->
