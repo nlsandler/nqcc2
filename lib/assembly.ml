@@ -27,6 +27,8 @@ type operand =
   | Pseudo of string
   | Memory of reg * int
   | Data of string
+  | PseudoMem of string * int
+  | Indexed of { base : reg; index : reg; scale : int }
 
 type unary_operator = Neg | Not | ShrOneOp
 
@@ -44,7 +46,12 @@ type binary_operator =
   | Shl
 
 type cond_code = E | NE | G | GE | L | LE | A | AE | B | BE | P | NP
-type asm_type = Longword | Quadword | Double
+
+type asm_type =
+  | Longword
+  | Quadword
+  | Double
+  | ByteArray of { size : int; alignment : int }
 
 type instruction =
   | Mov of asm_type * operand * operand
@@ -82,7 +89,7 @@ type top_level =
       name : string;
       alignment : int;
       global : bool;
-      init : Initializers.static_init;
+      init : Initializers.static_init list;
     }
   | StaticConstant of {
       name : string;
