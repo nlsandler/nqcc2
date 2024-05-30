@@ -1,4 +1,5 @@
 open Batteries
+open Cnums
 
 module T = struct
   include Tokens
@@ -147,15 +148,58 @@ let parse_id tokens =
   | T.Identifier x -> x
   | other -> raise_error ~expected:(Name "an identifier") ~actual:other
 
+(* parsing constants *)
+
+(* <int> ::= ? A constant token ?
+   <long> ::= ? an int or long token ?
+   <uint> ::= ? An unsigned int token ?
+   <ulong> ::= ? An unsigned int or unsigned long token ?
+   <double ::= ? A floating-point constant token ?
+*)
+let parse_constant tokens =
+  try
+    match Stream.next tokens with
+    | T.ConstDouble d -> Const.ConstDouble d
+    | T.ConstInt c -> (
+        match Big_int.int32_of_big_int_opt c with
+        | Some i32 -> Const.ConstInt i32
+        | None -> ConstLong (Big_int.int64_of_big_int c))
+    | T.ConstLong c -> ConstLong (Big_int.int64_of_big_int c)
+    | T.ConstUInt c -> (
+        match Big_int.uint32_of_big_int_opt c with
+        | Some ui32 -> Const.ConstUInt ui32
+        | None -> ConstULong (Big_int.uint64_of_big_int c))
+    | T.ConstULong c -> ConstULong (Big_int.uint64_of_big_int c)
+    (* we only call this when we know the next token is a constant *)
+    | _ ->
+        raise (ParseError "Internal error when parsing constant")
+        [@coverage off]
+  with Failure _ ->
+    (* int64_of_big_int raises failure when value is out of bounds *)
+    raise
+      (ParseError
+         "Constant is too large to fit in an int or long with given signedness")
+
 (* Parsing declarators *)
 
 (* first parse declarators to this type, then convert to AST  *)
 type declarator =
   | Ident of string
   | PointerDeclarator of declarator
+  | ArrayDeclarator of declarator * Const.t
   | FunDeclarator of param_info list * declarator
 
 and param_info = Param of Types.t * declarator
+
+(* { "[" <const> "]" }+ *)
+let rec parse_array_dimensions tokens =
+  match peek tokens with
+  | T.OpenBracket ->
+      Stream.junk tokens;
+      let dim = parse_constant tokens in
+      expect T.CloseBracket tokens;
+      dim :: parse_array_dimensions tokens
+  | _ -> []
 
 (* <simple-declarator> ::= <identifier> | "(" <declarator> ")" *)
 let rec parse_simple_declarator tokens =
@@ -177,10 +221,17 @@ and parse_declarator tokens =
       PointerDeclarator inner
   | _ -> parse_direct_declarator tokens
 
-(* <direct-declarator> ::= <simple-declarator> [ <param-list> ] *)
+(* <direct-declarator> ::= <simple-declarator> [ <declarator-suffix> ]
+   <declarator-suffix> ::= <param-list> | { "[" <const> "]" }+
+*)
 and parse_direct_declarator tokens =
   let simple_dec = parse_simple_declarator tokens in
   match peek tokens with
+  | T.OpenBracket ->
+      let array_dimensions = parse_array_dimensions tokens in
+      List.fold_left
+        (fun decl dim -> ArrayDeclarator (decl, dim))
+        simple_dec array_dimensions
   | T.OpenParen ->
       let params = parse_param_list tokens in
       FunDeclarator (params, simple_dec)
@@ -215,12 +266,28 @@ and parse_param tokens =
   let param_decl = parse_declarator tokens in
   Param (param_type, param_decl)
 
+(* convert constant to int and check that it's a valid array dimension: must be an integer > 0 *)
+let const_to_dim c =
+  let i =
+    match c with
+    | Const.ConstInt i -> Int32.to_int i
+    | ConstLong l -> Int64.to_int l
+    | ConstUInt u -> UInt32.to_int u
+    | ConstULong ul -> UInt64.to_int ul
+    | ConstDouble _ -> failwith "Array dimensions must have integer type"
+  in
+  if i > 0 then i else failwith "Array dimension must be greater than zero"
+
 let rec process_declarator decl base_type =
   match decl with
   | Ident s -> (s, base_type, [])
   | PointerDeclarator d ->
       let derived_type = Types.Pointer base_type in
       process_declarator d derived_type
+  | ArrayDeclarator (inner, cnst) ->
+      let size = const_to_dim cnst in
+      let derived_type = Types.Array { elem_type = base_type; size } in
+      process_declarator inner derived_type
   | FunDeclarator (params, Ident s) ->
       let process_param (Param (p_base_type, p_decl)) =
         let param_name, param_t, _ = process_declarator p_decl p_base_type in
@@ -244,6 +311,7 @@ let rec process_declarator decl base_type =
 (* abstract declarators*)
 type abstract_declarator =
   | AbstractPointer of abstract_declarator
+  | AbstractArray of abstract_declarator * Const.t
   | AbstractBase
 
 (* <abstract-declarator> ::= "*" [ <abstract-declarator> ]
@@ -257,7 +325,7 @@ let rec parse_abstract_declarator tokens =
       Stream.junk tokens;
       let inner =
         match peek tokens with
-        | T.Star | T.OpenParen ->
+        | T.Star | T.OpenParen | T.OpenBracket ->
             (* there's an inner declarator *)
             parse_abstract_declarator tokens
         | T.CloseParen -> AbstractBase
@@ -267,44 +335,38 @@ let rec parse_abstract_declarator tokens =
       AbstractPointer inner
   | _ -> parse_direct_abstract_declarator tokens
 
-(* <direct-abstract-declarator ::= "(" <abstract-declarator> ")" *)
+(* <direct-abstract-declarator ::= "(" <abstract-declarator> ")" { "[" <const> "]" }
+                                | { "[" <const> "]" }+
+*)
 and parse_direct_abstract_declarator tokens =
-  expect T.OpenParen tokens;
-  let decl = parse_abstract_declarator tokens in
-  expect T.CloseParen tokens;
-  decl
+  match peek tokens with
+  | T.OpenParen ->
+      Stream.junk tokens;
+      let abstr_decl = parse_abstract_declarator tokens in
+      expect T.CloseParen tokens;
+      (* inner declarator is followed by possibly-empty list of aray dimensions *)
+      let array_dimensions = parse_array_dimensions tokens in
+      List.fold_left
+        (fun decl dim -> AbstractArray (decl, dim))
+        abstr_decl array_dimensions
+  | T.OpenBracket ->
+      let array_dimensions = parse_array_dimensions tokens in
+      List.fold_left
+        (fun decl dim -> AbstractArray (decl, dim))
+        AbstractBase array_dimensions
+  | other ->
+      raise_error ~expected:(Name "an abstract direct declarator") ~actual:other
 
 let rec process_abstract_declarator decl base_type =
   match decl with
   | AbstractBase -> base_type
+  | AbstractArray (inner, cnst) ->
+      let dim = const_to_dim cnst in
+      let derived_type = Types.Array { elem_type = base_type; size = dim } in
+      process_abstract_declarator inner derived_type
   | AbstractPointer inner ->
       let derived_type = Types.Pointer base_type in
       process_abstract_declarator inner derived_type
-
-(* <int> ::= ? A constant token ? *)
-let parse_constant tokens =
-  try
-    match Stream.next tokens with
-    | T.ConstDouble d -> Const.ConstDouble d
-    | T.ConstInt c -> (
-        match Big_int.int32_of_big_int_opt c with
-        | Some i32 -> Const.ConstInt i32
-        | None -> ConstLong (Big_int.int64_of_big_int c))
-    | T.ConstLong c -> ConstLong (Big_int.int64_of_big_int c)
-    | T.ConstUInt c -> (
-        match Big_int.uint32_of_big_int_opt c with
-        | Some ui32 -> Const.ConstUInt ui32
-        | None -> ConstULong (Big_int.uint64_of_big_int c))
-    | T.ConstULong c -> ConstULong (Big_int.uint64_of_big_int c)
-    (* we only call this when we know the next token is a constant *)
-    | _ ->
-        raise (ParseError "Internal error when parsing constant")
-        [@coverage off]
-  with Failure _ ->
-    (* int64_of_big_int raises failure when value is out of bounds *)
-    raise
-      (ParseError
-         "Constant is too large to fit in an int or long with given signedness")
 
 (* <unop> ::= "-" | "~" *)
 let parse_unop tokens =
@@ -389,6 +451,12 @@ and postfix_helper primary tokens =
       Stream.junk tokens;
       let incr_exp = Ast.PostfixIncr primary in
       postfix_helper incr_exp tokens
+  | T.OpenBracket ->
+      Stream.junk tokens;
+      let index = parse_expression 0 tokens in
+      expect T.CloseBracket tokens;
+      let subscript_exp = Ast.Subscript { ptr = primary; index } in
+      postfix_helper subscript_exp tokens
   | _ -> primary
 
 (* <factor> ::= <unop> <factor> | "(" { <type-specifier> }+ ")" | factor | <postfix-exp> *)
@@ -493,6 +561,30 @@ let parse_optional_expression delim tokens =
     let e = parse_expression 0 tokens in
     expect delim tokens;
     Some e
+
+(* <initializer> ::= <exp> | "{" <initializer> { "," <initializer> } [ "," ] "}" *)
+let rec parse_initializer tokens =
+  if peek tokens = T.OpenBrace then (
+    Stream.junk tokens;
+    let init_list = parse_init_list tokens in
+    expect T.CloseBrace tokens;
+    Ast.CompoundInit init_list)
+  else
+    let e = parse_expression 0 tokens in
+    Ast.SingleInit e
+
+and parse_init_list tokens =
+  let next_init = parse_initializer tokens in
+  match Stream.npeek 2 tokens with
+  (* trailing comma - consume it and return *)
+  | T.Comma :: T.CloseBrace :: _ ->
+      Stream.junk tokens;
+      [ next_init ]
+  (* comma that isn't followed by a brace means there's one more element *)
+  | T.Comma :: _ ->
+      Stream.junk tokens;
+      next_init :: parse_init_list tokens
+  | _ -> [ next_init ]
 
 (* <statement> ::= "return" <exp> ";"
                  | <exp> ";"
@@ -654,7 +746,7 @@ and finish_parsing_variable_declaration var_type storage_class name tokens =
   match Stream.next tokens with
   | T.Semicolon -> Ast.{ name; var_type; storage_class; init = None }
   | T.EqualSign ->
-      let init = parse_expression 0 tokens in
+      let init = parse_initializer tokens in
       expect T.Semicolon tokens;
       { name; var_type; storage_class; init = Some init }
   | other ->

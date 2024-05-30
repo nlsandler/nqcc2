@@ -22,6 +22,13 @@ let mk_const t i =
 
 let mk_ast_const t i = Ast.{ e = Constant (mk_const t i); t }
 
+let get_ptr_scale = function
+  | Types.Pointer referenced -> Type_utils.get_size referenced
+  | t ->
+      failwith
+        ("Internal error: tried to get scale of non-pointer type: "
+        ^ Types.show t) [@coverage off]
+
 let convert_op = function
   | Ast.Complement -> T.Complement
   | Ast.Negate -> T.Negate
@@ -61,15 +68,24 @@ let rec emit_tacky_for_exp Ast.{ e; t } =
   | Ast.Constant c -> ([], PlainOperand (T.Constant c))
   | Ast.Var v -> ([], PlainOperand (T.Var v))
   | Ast.Unary (Incr, v) ->
-      emit_compound_expression ~op:Ast.Add ~lhs:v ~rhs:(mk_ast_const t 1)
+      let const_t = if Type_utils.is_pointer t then Types.Long else t in
+      emit_compound_expression ~op:Ast.Add ~lhs:v ~rhs:(mk_ast_const const_t 1)
         ~result_t:t
   | Ast.Unary (Decr, v) ->
-      emit_compound_expression ~op:Ast.Subtract ~lhs:v ~rhs:(mk_ast_const t 1)
-        ~result_t:t
+      let const_t = if Type_utils.is_pointer t then Types.Long else t in
+      emit_compound_expression ~op:Ast.Subtract ~lhs:v
+        ~rhs:(mk_ast_const const_t 1) ~result_t:t
   | Ast.Cast { target_type; e } -> emit_cast_expression target_type e
   | Ast.Unary (op, inner) -> emit_unary_expression t op inner
   | Ast.Binary (And, e1, e2) -> emit_and_expression e1 e2
   | Ast.Binary (Or, e1, e2) -> emit_or_expression e1 e2
+  | Ast.Binary (Add, e1, e2) when Type_utils.is_pointer t ->
+      emit_pointer_addition t e1 e2
+  | Ast.Binary (Subtract, ptr, index) when Type_utils.is_pointer t ->
+      emit_subtraction_from_pointer t ptr index
+  | Ast.Binary (Subtract, e1, e2) when Type_utils.is_pointer e1.t ->
+      (* at least one operand is pointer but result isn't, must be subtracting one pointer from another *)
+      emit_pointer_diff t e1 e2
   | Ast.Binary (op, e1, e2) -> emit_binary_expression t op e1 e2
   | Ast.Assignment (lhs, rhs) -> emit_assignment lhs rhs
   | Ast.CompoundAssignment { op; lhs; rhs; result_t } ->
@@ -81,6 +97,7 @@ let rec emit_tacky_for_exp Ast.{ e; t } =
   | Ast.FunCall { f; args } -> emit_fun_call t f args
   | Ast.Dereference inner -> emit_dereference inner
   | Ast.AddrOf inner -> emit_addr_of t inner
+  | Ast.Subscript { ptr; index } -> emit_subscript t ptr index
 
 (* helper functions for individual expression *)
 and emit_unary_expression t op inner =
@@ -93,12 +110,39 @@ and emit_unary_expression t op inner =
   (instructions, PlainOperand dst)
 
 and emit_postfix op inner =
+  (* If LHS is a variable:
+   *   dst = lhs
+   *   lhs = lhs <op> 1
+   * If LHS is a pointer:
+   *   dst = load(ptr)
+   *   tmp = dst <op> 1
+   *   store(tmp, ptr)
+   *
+   * If LHS has a pointer type, we implement <op> with AddPtr
+   * otherwise with Binary instruction
+   *)
   (* define var for result - i.e. value of lval BEFORE incr or decr *)
   let dst = T.Var (create_tmp inner.t) in
   (* evaluate inner to get exp_result *)
   let instrs, lval = emit_tacky_for_exp inner in
-  let tacky_op = convert_binop op in
-  let one = T.Constant (mk_const inner.t 1) in
+  (* Helper to construct Binary or AddPtr instruction from operands, depending on type
+   * Note that dst is destination of this instruction rather than the whole expression
+   * (i.e. it's the lvalue we're updating, or a temporary we'll then store to that lvalue
+   *)
+  let do_op op src dst =
+    let index =
+      match op with
+      | Ast.Add -> T.Constant (mk_const Long 1)
+      | Subtract -> T.Constant (mk_const Long (-1))
+      | _ -> failwith "Internal error"
+    in
+    if Type_utils.is_pointer inner.t then
+      T.AddPtr { ptr = src; index; scale = get_ptr_scale inner.t; dst }
+    else
+      let one = T.Constant (mk_const inner.t 1) in
+      T.Binary { op = convert_binop op; src1 = src; src2 = one; dst }
+  in
+
   (* copy result to dst and perform incr or decr *)
   let oper_instrs =
     match lval with
@@ -106,10 +150,7 @@ and emit_postfix op inner =
         (* dst = v
          * v = v + 1 // or v - 1
          *)
-        [
-          T.Copy { src = Var v; dst };
-          T.Binary { op = tacky_op; src1 = Var v; src2 = one; dst = Var v };
-        ]
+        [ T.Copy { src = Var v; dst }; do_op op (Var v) (Var v) ]
     | DereferencedPointer p ->
         (* dst = Load(p)
          * tmp = dst + 1 // or dst - 1
@@ -118,7 +159,7 @@ and emit_postfix op inner =
         let tmp = T.Var (create_tmp inner.t) in
         [
           T.Load { src_ptr = p; dst };
-          T.Binary { op = tacky_op; src1 = dst; src2 = one; dst = tmp };
+          do_op op dst tmp;
           T.Store { src = tmp; dst_ptr = p };
         ]
     | PlainOperand _ -> failwith "Invalid lvalue in postfix incr/decr"
@@ -153,6 +194,59 @@ and get_cast_instruction src dst src_t dst_t =
         Truncate { src; dst }
       else if Type_utils.is_signed src_t then T.SignExtend { src; dst }
       else T.ZeroExtend { src; dst }
+
+and emit_pointer_addition t e1 e2 =
+  let eval_v1, v1 = emit_tacky_and_convert e1 in
+  let eval_v2, v2 = emit_tacky_and_convert e2 in
+  let dst_name = create_tmp t in
+  let dst = T.Var dst_name in
+  let ptr, index = if t = e1.t then (v1, v2) else (v2, v1) in
+  let scale = get_ptr_scale t in
+  let instructions =
+    eval_v1 @ eval_v2 @ [ AddPtr { ptr; index; scale; dst } ]
+  in
+  (instructions, PlainOperand dst)
+
+and emit_subscript t e1 e2 =
+  let instructions, result = emit_pointer_addition (Types.Pointer t) e1 e2 in
+  match result with
+  | PlainOperand dst -> (instructions, DereferencedPointer dst)
+  | _ ->
+      failwith
+        "Internal error: expected result of pointer addition to be lvalue \
+         converted" [@coverage off]
+
+and emit_subtraction_from_pointer t ptr_e idx_e =
+  let eval_v1, ptr = emit_tacky_and_convert ptr_e in
+  let eval_v2, index = emit_tacky_and_convert idx_e in
+  let dst_name = create_tmp t in
+  let dst = T.Var dst_name in
+  let negated_index = T.Var (create_tmp Types.Long) in
+  let scale = get_ptr_scale t in
+  ( eval_v1
+    @ eval_v2
+    @ [
+        Unary { op = Negate; src = index; dst = negated_index };
+        AddPtr { ptr; index = negated_index; scale; dst };
+      ],
+    PlainOperand dst )
+
+and emit_pointer_diff t e1 e2 =
+  let eval_v1, v1 = emit_tacky_and_convert e1 in
+  let eval_v2, v2 = emit_tacky_and_convert e2 in
+  let ptr_diff = T.Var (create_tmp Types.Long) in
+  let dst_name = create_tmp t in
+  let dst = T.Var dst_name in
+  let scale =
+    T.Constant (Const.ConstLong ((Int64.of_int % get_ptr_scale) e1.t))
+  in
+  ( eval_v1
+    @ eval_v2
+    @ [
+        Binary { op = Subtract; src1 = v1; src2 = v2; dst = ptr_diff };
+        Binary { op = Divide; src1 = ptr_diff; src2 = scale; dst };
+      ],
+    PlainOperand dst )
 
 and emit_binary_expression t op e1 e2 =
   let eval_v1, v1 = emit_tacky_and_convert e1 in
@@ -215,16 +309,45 @@ and emit_compound_expression ~op ~lhs ~rhs ~result_t =
       let cast_tmp_to_lhs = get_cast_instruction tmp dst result_t lhs_t in
       (tmp, [ cast_lhs_to_tmp ], [ cast_tmp_to_lhs ])
   in
-  let binary_instr =
-    T.Binary
-      { op = convert_binop op; src1 = result_var; src2 = rhs; dst = result_var }
+
+  let do_operation =
+    if Type_utils.is_pointer result_t then
+      let scale = get_ptr_scale result_t in
+      match op with
+      | Add ->
+          [
+            T.AddPtr { ptr = result_var; index = rhs; scale; dst = result_var };
+          ]
+      | Subtract ->
+          let negated_index = T.Var (create_tmp Types.Long) in
+          [
+            Unary { op = Negate; src = rhs; dst = negated_index };
+            AddPtr
+              {
+                ptr = result_var;
+                index = negated_index;
+                scale;
+                dst = result_var;
+              };
+          ]
+      | _ -> failwith "Internal error in compound assignment"
+    else
+      [
+        T.Binary
+          {
+            op = convert_binop op;
+            src1 = result_var;
+            src2 = rhs;
+            dst = result_var;
+          };
+      ]
   in
   let instructions =
     eval_lhs
     @ eval_rhs
     @ load_instr
     @ cast_to
-    @ [ binary_instr ]
+    @ do_operation
     @ cast_from
     @ store_instr
   in
@@ -331,6 +454,20 @@ and emit_tacky_and_convert e =
       let dst = T.Var (create_tmp e.t) in
       (instructions @ [ T.Load { src_ptr = ptr; dst } ], dst)
 
+let rec emit_compound_init name offset = function
+  | Ast.SingleInit e ->
+      let eval_init, v = emit_tacky_and_convert e in
+      eval_init @ [ CopyToOffset { src = v; dst = name; offset } ]
+  | Ast.CompoundInit (Array { elem_type; _ }, inits) ->
+      let handle_init idx elem_init =
+        let new_offset = offset + (idx * Type_utils.get_size elem_type) in
+        emit_compound_init name new_offset elem_init
+      in
+      List.flatten (List.mapi handle_init inits)
+  | Ast.CompoundInit (_, _) ->
+      failwith "Internal error: compound init has non-array type!"
+      [@coverage off]
+
 let rec emit_tacky_for_statement = function
   | Ast.Return e ->
       let eval_exp, v = emit_tacky_and_convert e in
@@ -370,12 +507,14 @@ and emit_local_declaration = function
   | Ast.FunDecl _ -> []
 
 and emit_var_declaration = function
-  | { name; init = Some e; var_type; _ } ->
+  | { name; init = Some (Ast.SingleInit e); var_type; _ } ->
       (* treat declaration with initializer like an assignment expression *)
       let eval_assignment, _assign_result =
         emit_assignment { e = Ast.Var name; t = var_type } e
       in
       eval_assignment
+  | { name; init = Some compound_init; _ } ->
+      emit_compound_init name 0 compound_init
   | { init = None; _ } ->
       (* don't generate instructions for declaration without initializer *) []
 
