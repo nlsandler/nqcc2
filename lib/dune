@@ -35,7 +35,7 @@
   settings
   unique_ids
   validate_labels)
- (libraries batteries ppx_deriving ppx_inline_test camlp-streams)
+ (libraries batteries ppx_deriving ppx_inline_test camlp-streams bisect_ppx)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq ppx_inline_test))
  (instrumentation

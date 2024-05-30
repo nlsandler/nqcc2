@@ -102,6 +102,8 @@ let rec lex_helper chars =
   | '?' :: rest -> QuestionMark :: lex_helper rest
   | ':' :: rest -> Colon :: lex_helper rest
   | ',' :: rest -> Comma :: lex_helper rest
+  | '[' :: rest -> OpenBracket :: lex_helper rest
+  | ']' :: rest -> CloseBracket :: lex_helper rest
   | c :: rest when Char.is_whitespace c -> lex_helper rest
   | c :: _ when Char.is_digit c || c = '.' -> lex_constant chars
   | _ -> lex_identifier chars

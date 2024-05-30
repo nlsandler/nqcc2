@@ -1,6 +1,6 @@
 type initial_value =
   | Tentative
-  | Initial of Initializers.static_init
+  | Initial of Initializers.static_init list
   | NoInitializer
 
 type identifier_attrs =

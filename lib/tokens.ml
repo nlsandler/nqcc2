@@ -75,4 +75,6 @@ type t =
   | QuestionMark
   | Colon
   | Comma
+  | OpenBracket
+  | CloseBracket
 [@@deriving show]
