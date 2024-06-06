@@ -27,6 +27,12 @@ module CommonAst = struct
 
   type storage_class = Static | Extern [@@deriving show]
 
+  type member_declaration = { member_name : string; member_type : Types.t }
+  [@@deriving show]
+
+  type struct_declaration = { tag : string; members : member_declaration list }
+  [@@deriving show]
+
   type 'init_t variable_declaration = {
     name : string;
     var_type : Types.t;
@@ -104,6 +110,7 @@ module CommonAst = struct
   and ('init_t, 'exp_t) declaration =
     | FunDecl of ('init_t, 'exp_t) function_declaration
     | VarDecl of 'init_t variable_declaration
+    | StructDecl of struct_declaration
 
   type ('init_t, 'exp_t) prog_t =
     | Program of ('init_t, 'exp_t) declaration list
@@ -131,6 +138,8 @@ module Untyped = struct
     | Subscript of { ptr : exp; index : exp }
     | SizeOf of exp
     | SizeOfT of Types.t
+    | Dot of { strct : exp; member : string }
+    | Arrow of { strct : exp; member : string }
   [@@deriving show]
 
   type initializr = SingleInit of exp | CompoundInit of initializr list
@@ -169,6 +178,8 @@ module Typed = struct
     | Subscript of { ptr : exp; index : exp }
     | SizeOf of exp
     | SizeOfT of Types.t
+    | Dot of { strct : exp; member : string }
+    | Arrow of { strct : exp; member : string }
   [@@deriving show]
 
   and exp = { e : inner_exp; t : Types.t }
