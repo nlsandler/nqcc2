@@ -26,7 +26,7 @@ type operand =
   | Reg of reg
   | Pseudo of string
   | Memory of reg * int
-  | Data of string
+  | Data of string * int
   | PseudoMem of string * int
   | Indexed of { base : reg; index : reg; scale : int }
 

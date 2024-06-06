@@ -10,9 +10,10 @@ module T = struct
   include Ast.Typed
 end
 
-let is_lvalue T.{ e; _ } =
+let rec is_lvalue T.{ e; _ } =
   match e with
-  | T.Dereference _ | T.Subscript _ | T.Var _ | T.String _ -> true
+  | T.Dereference _ | T.Subscript _ | T.Var _ | T.String _ | T.Arrow _ -> true
+  | T.Dot { strct; _ } -> is_lvalue strct
   | _ -> false
 
 let rec validate_type = function
@@ -23,7 +24,62 @@ let rec validate_type = function
   | FunType { param_types; ret_type } ->
       List.iter validate_type param_types;
       validate_type ret_type
-  | Char | SChar | UChar | Int | Long | UInt | ULong | Double | Void -> ()
+  | Char | SChar | UChar | Int | Long | UInt | ULong | Double | Void
+  | Structure _ ->
+      ()
+
+let validate_struct_definition U.{ tag; members } =
+  (* make sure it's not already in the type table *)
+  if Type_table.mem tag then failwith "Structure was already declared"
+  else
+    (* check for duplicate number names *)
+    let member_names = ref Set.empty in
+    let validate_member U.{ member_name; member_type } =
+      if Set.mem member_name !member_names then
+        failwith
+          ("Duplicate declaration of member "
+          ^ member_name
+          ^ " in structure "
+          ^ tag)
+      else member_names := Set.add member_name !member_names;
+      (* validate member type *)
+      validate_type member_type;
+      match member_type with
+      | Types.FunType _ ->
+          (* this is redundant, we'd already reject this in parser *)
+          failwith "Can't declare structure member with function type"
+      | _ ->
+          if is_complete member_type then ()
+          else failwith "Cannot declare structure member with incomplete type"
+    in
+    List.iter validate_member members
+
+let typecheck_struct_decl (U.{ tag; members } as sd) =
+  if List.is_empty members then (* ignore forward declarations *) ()
+  else (
+    (* validate the definition, then add it to the type table *)
+    validate_struct_definition sd;
+    let build_member_def (current_size, current_alignment, current_members)
+        U.{ member_name; member_type } =
+      let member_alignment = get_alignment member_type in
+      let offset =
+        Rounding.round_away_from_zero member_alignment current_size
+      in
+      let member_entry = Type_table.{ member_type; offset } in
+      let new_alignment = max current_alignment member_alignment in
+      let new_size = offset + get_size member_type in
+      let new_members = Map.(current_members <-- (member_name, member_entry)) in
+      (new_size, new_alignment, new_members)
+    in
+    let unpadded_size, alignment, member_defs =
+      List.fold_left build_member_def (0, 1, Map.empty) members
+    in
+    let size = Rounding.round_away_from_zero alignment unpadded_size in
+    let struct_def = Type_table.{ alignment; size; members = member_defs } in
+    Type_table.add_struct_definition tag struct_def);
+
+  (* actual conversion to new type is trivial  *)
+  T.{ tag; members }
 
 let convert_to e target_type =
   let cast = T.Cast { target_type; e } in
@@ -120,6 +176,8 @@ let rec typecheck_exp = function
   | Subscript { ptr; index } -> typecheck_subscript ptr index
   | SizeOfT t -> typecheck_size_of_t t
   | SizeOf e -> typecheck_size_of e
+  | Dot { strct; member } -> typecheck_dot_operator strct member
+  | Arrow { strct; member } -> typecheck_arrow_operator strct member
 
 and typecheck_cast target_type inner =
   validate_type target_type;
@@ -136,9 +194,7 @@ and typecheck_cast target_type inner =
       else if not (is_scalar typed_inner.T.t) then
         failwith "Can only cast scalar expressions to non-void type"
       else
-        let cast_exp =
-          T.Cast { target_type; e = typecheck_and_convert inner }
-        in
+        let cast_exp = T.Cast { target_type; e = typed_inner } in
         set_type cast_exp target_type
 
 (* convenience function to type check an expression and validate that it's scalar*)
@@ -420,6 +476,9 @@ and typecheck_conditional condition then_exp else_exp =
       get_common_pointer_type typed_then typed_else
     else if is_arithmetic typed_then.t && is_arithmetic typed_else.t then
       get_common_type typed_then.t typed_else.t
+      (* only other option is structure typess, this is fine if they're identical
+       * (typecheck_and_convert already validated that they're complete) *)
+    else if typed_then.t = typed_else.t then typed_then.t
     else failwith "Invalid operands for conditional"
   in
   let converted_then = convert_to typed_then result_type in
@@ -504,10 +563,44 @@ and typecheck_size_of inner =
 and typecheck_and_convert e =
   let typed_e = typecheck_exp e in
   match typed_e.t with
+  | Types.Structure _ when not (is_complete typed_e.t) ->
+      failwith "Incomplete structure type not permitted here"
   | Types.Array { elem_type; _ } ->
       let addr_exp = T.AddrOf typed_e in
       set_type addr_exp (Pointer elem_type)
   | _ -> typed_e
+
+and typecheck_dot_operator strct member =
+  let typed_strct = typecheck_and_convert strct in
+  match typed_strct.t with
+  | Types.Structure tag ->
+      (* typecheck_and_convert already validated that this structure type is complete *)
+      let struct_def = Type_table.find tag in
+      let member_typ =
+        try Map.(struct_def.members --> member).member_type
+        with Not_found ->
+          failwith ("Struct type " ^ tag ^ " has no member " ^ member)
+      in
+      let dot_exp = T.Dot { strct = typed_strct; member } in
+      set_type dot_exp member_typ
+  | _ ->
+      failwith
+        "Dot operator can only be applied to expressions with structure type"
+
+and typecheck_arrow_operator strct_ptr member =
+  let typed_strct_ptr = typecheck_and_convert strct_ptr in
+  match typed_strct_ptr.t with
+  | Types.Pointer (Structure tag) ->
+      let struct_def = Type_table.find tag in
+      let member_typ =
+        try Map.(struct_def.members --> member).member_type
+        with Not_found ->
+          failwith
+            ("Struct type " ^ tag ^ " is incomplete or has no member " ^ member)
+      in
+      let arrow_exp = T.Arrow { strct = typed_strct_ptr; member } in
+      set_type arrow_exp member_typ
+  | _ -> failwith "Arrow operator can only be applied to pointers to structure"
 
 let rec static_init_helper var_type init =
   match (var_type, init) with
@@ -521,7 +614,7 @@ let rec static_init_helper var_type init =
         | _ -> failwith "string is too long for initializer"
       else
         failwith
-          "Can't initailize array of non-character type with string literal"
+          "Can't initialize array of non-character type with string literal"
   | Types.Array _, U.SingleInit _ ->
       failwith "Can't initialize array from scalar value"
   | Types.Pointer Char, U.SingleInit (U.String s) ->
@@ -529,21 +622,58 @@ let rec static_init_helper var_type init =
       [ PointerInit str_id ]
   | _, U.SingleInit (U.String _) ->
       failwith "String literal can only initialize char *"
+  | Structure tag, U.CompoundInit inits ->
+      let struct_def = Type_table.find tag in
+      let members = Type_table.get_members tag in
+      if List.length inits > List.length members then
+        failwith "Too many elements in struct initializer"
+      else
+        let handle_member (current_offset, current_inits) memb init =
+          let padding =
+            if current_offset < memb.Type_table.offset then
+              [ Initializers.ZeroInit (memb.offset - current_offset) ]
+            else []
+          in
+          let more_static_inits = static_init_helper memb.member_type init in
+          let new_inits = current_inits @ padding @ more_static_inits in
+          let new_offset = memb.offset + get_size memb.member_type in
+          (new_offset, new_inits)
+        in
+        let initialized_members = List.take (List.length inits) members in
+        let initialized_size, explicit_initializers =
+          List.fold_left2 handle_member (0, []) initialized_members inits
+        in
+        let trailing_padding =
+          if initialized_size < struct_def.size then
+            [ Initializers.ZeroInit (struct_def.size - initialized_size) ]
+          else []
+        in
+        explicit_initializers @ trailing_padding
+  | Structure _, SingleInit _ ->
+      failwith " Can't initialize static structure with scalar value"
   | _, U.SingleInit (U.Constant c) when is_zero_int c ->
       Initializers.zero var_type
   | Types.Pointer _, _ -> failwith "invalid static initializer for pointer"
   | _, U.SingleInit (U.Constant c) ->
-      let init_val =
-        match Const_convert.const_convert var_type c with
-        | Const.ConstChar c -> Initializers.CharInit c
-        | Const.ConstInt i -> Initializers.IntInit i
-        | Const.ConstLong l -> Initializers.LongInit l
-        | Const.ConstUChar uc -> Initializers.UCharInit uc
-        | Const.ConstUInt ui -> UIntInit ui
-        | Const.ConstULong ul -> ULongInit ul
-        | Const.ConstDouble d -> DoubleInit d
-      in
-      [ init_val ]
+      if is_arithmetic var_type then
+        let init_val =
+          match Const_convert.const_convert var_type c with
+          | Const.ConstChar c -> Initializers.CharInit c
+          | Const.ConstInt i -> Initializers.IntInit i
+          | Const.ConstLong l -> Initializers.LongInit l
+          | Const.ConstUChar uc -> Initializers.UCharInit uc
+          | Const.ConstUInt ui -> UIntInit ui
+          | Const.ConstULong ul -> ULongInit ul
+          | Const.ConstDouble d -> DoubleInit d
+        in
+        [ init_val ]
+      else
+        (* we already dealt with pointers (can only initialize w/ null constant or string literal)
+         * and already rejected any declarations with type void and any arrays or structs
+         * initialized with scalar expressions *)
+        failwith
+          ("Internal error: should have already rejected initializer with type "
+          ^ Types.show var_type) [@coverage off]
   | _, U.SingleInit _ -> failwith "non-constant initializer"
   | Array { elem_type; size }, U.CompoundInit inits ->
       let static_inits = List.concat_map (static_init_helper elem_type) inits in
@@ -568,6 +698,10 @@ let rec make_zero_init t =
   match t with
   | Types.Array { elem_type; size } as t ->
       T.CompoundInit (t, List.make size (make_zero_init elem_type))
+  | Structure tag ->
+      let members = Type_table.get_members tag in
+      T.CompoundInit
+        (t, List.map (fun m -> make_zero_init m.Type_table.member_type) members)
   | Char | SChar -> scalar (Const.ConstChar Int8.zero)
   | Int -> scalar (Const.ConstInt Int32.zero)
   | UChar -> scalar (Const.ConstUChar UInt8.zero)
@@ -588,13 +722,33 @@ let rec typecheck_init target_type init =
       else if String.length s > size then
         failwith "Too many characters in string literal"
       else T.SingleInit (set_type (T.String s) target_type)
+  | Types.Structure tag, CompoundInit init_list ->
+      let members = Type_table.get_members tag in
+      if List.length init_list > List.length members then
+        failwith "Too many elements in structure initializer"
+      else
+        let initialized_members, uninitialized_members =
+          List.takedrop (List.length init_list) members
+        in
+        let typechecked_members =
+          List.map2
+            (fun memb init -> typecheck_init memb.Type_table.member_type init)
+            initialized_members init_list
+        in
+        let padding =
+          List.map
+            (fun m -> make_zero_init m.Type_table.member_type)
+            uninitialized_members
+        in
+
+        T.CompoundInit (target_type, typechecked_members @ padding)
   | _, U.SingleInit e ->
       let typechecked_e = typecheck_and_convert e in
       let cast_exp = convert_by_assignment typechecked_e target_type in
       T.SingleInit cast_exp
   | Array { elem_type; size }, CompoundInit inits ->
       if List.length inits > size then
-        failwith "too mahy values in initializer "
+        failwith "too many values in initializer "
       else
         let typechecked_inits = List.map (typecheck_init elem_type) inits in
         let padding =
@@ -695,6 +849,7 @@ and typecheck_statement ret_type = function
 and typecheck_local_decl = function
   | VarDecl vd -> VarDecl (typecheck_local_var_decl vd)
   | FunDecl fd -> FunDecl (typecheck_fn_decl fd)
+  | StructDecl sd -> StructDecl (typecheck_struct_decl sd)
 
 and typecheck_local_var_decl ({ name; init; storage_class; var_type } as vd) =
   if var_type = Void then failwith "No void declarations"
@@ -714,6 +869,9 @@ and typecheck_local_var_decl ({ name; init; storage_class; var_type } as vd) =
           Symbols.add_static_var name ~t:var_type ~init:NoInitializer
             ~global:true);
       T.{ name; init = None; storage_class; var_type }
+  | _ when not (is_complete var_type) ->
+      (* can't define a variable with an incomplete type *)
+      failwith "Cannot define a variable with an incomplete type"
   | Some Static ->
       let zero_init = Symbols.Initial (Initializers.zero var_type) in
       let static_init =
@@ -747,38 +905,48 @@ and typecheck_fn_decl { name; fun_type; params; body; storage_class } =
         [@coverage off]
   in
   let has_body = Option.is_some body in
-  let global = storage_class <> Some Static in
-  (* helper function to reconcile current and previous declarations *)
-  let check_against_previous Symbols.{ t = prev_t; attrs; _ } =
-    if prev_t <> fun_type then
-      failwith ("Redeclared function " ^ name ^ " with a different type")
-    else
-      match attrs with
-      | Symbols.FunAttr { global = prev_global; defined = prev_defined } ->
-          if prev_defined && has_body then
-            failwith ("Defined body of function " ^ name ^ "twice")
-          else if prev_global && storage_class = Some Static then
-            failwith "Static function declaration follows non-static"
-          else
-            let defined = has_body || prev_defined in
-            (defined, prev_global)
-      | _ ->
-          failwith
-            "Internal error: symbol has function type but not function \
-             attributes" [@coverage off]
-  in
-  let old_decl = Symbols.get_opt name in
-  let defined, global =
-    Option.map_default check_against_previous (has_body, global) old_decl
-  in
+  (* can't define a function with incomplete return or param type *)
+  if
+    has_body
+    && not
+         ((return_t = Void || is_complete return_t)
+         && List.for_all is_complete param_ts)
+  then
+    failwith
+      "Can't define a function with incomplete return type or parameter type"
+  else
+    let global = storage_class <> Some Static in
+    (* helper function to reconcile current and previous declarations *)
+    let check_against_previous Symbols.{ t = prev_t; attrs } =
+      if prev_t <> fun_type then
+        failwith ("Redeclared function " ^ name ^ " with a different type")
+      else
+        match attrs with
+        | Symbols.FunAttr { global = prev_global; defined = prev_defined } ->
+            if prev_defined && has_body then
+              failwith ("Defined body of function " ^ name ^ "twice")
+            else if prev_global && storage_class = Some Static then
+              failwith "Static function declaration follows non-static"
+            else
+              let defined = has_body || prev_defined in
+              (defined, prev_global)
+        | _ ->
+            failwith
+              "Internal error: symbol has function type but not function \
+               attributes" [@coverage off]
+    in
+    let old_decl = Symbols.get_opt name in
+    let defined, global =
+      Option.map_default check_against_previous (has_body, global) old_decl
+    in
 
-  Symbols.add_fun name ~t:fun_type ~defined ~global;
+    Symbols.add_fun name ~t:fun_type ~defined ~global;
 
-  if has_body then
-    List.iter2 (fun p t -> Symbols.add_automatic_var p ~t) params param_ts
-  else ();
-  let body = Option.map (typecheck_block return_t) body in
-  T.{ name; fun_type; params; body; storage_class }
+    if has_body then
+      List.iter2 (fun p t -> Symbols.add_automatic_var p ~t) params param_ts
+    else ();
+    let body = Option.map (typecheck_block return_t) body in
+    T.{ name; fun_type; params; body; storage_class }
 
 let typecheck_file_scope_var_decl U.{ name; var_type; init; storage_class } =
   if var_type = Void then failwith "void variables not allowed"
@@ -789,44 +957,49 @@ let typecheck_file_scope_var_decl U.{ name; var_type; init; storage_class } =
   let static_init =
     Option.map_default (to_static_init var_type) default_init init
   in
-  let current_global = storage_class <> Some Static in
-  let old_decl = Symbols.get_opt name in
-  let check_against_previous Symbols.{ t; attrs } =
-    if t <> var_type then failwith "Variable redeclared with different type"
-    else
-      match attrs with
-      | StaticAttr { global = prev_global; init = prev_init } ->
-          let global =
-            if storage_class = Some Extern then prev_global
-            else if current_global = prev_global then current_global
-            else failwith "Conflicting variable linkage"
-          in
-          let init =
-            match (prev_init, static_init) with
-            | Initial _, Initial _ ->
-                failwith "Conflicting global variable definition"
-            | Initial _, _ -> prev_init
-            | Tentative, (Tentative | NoInitializer) -> Tentative
-            | _, Initial _ | NoInitializer, _ -> static_init
-          in
-          (global, init)
-      | _ ->
-          failwith
-            "Internal error, file-scope variable previously declared as local \
-             variable or function" [@coverage off]
-  in
-  let global, init =
-    Option.map_default check_against_previous
-      (current_global, static_init)
-      old_decl
-  in
-  Symbols.add_static_var name ~t:var_type ~global ~init;
-  (* Okay to drop initializer b/c it's never used after this pass *)
-  T.{ name; var_type; init = None; storage_class }
+  if not (is_complete var_type || static_init = NoInitializer) then
+    (* note: some compilers permit tentative definition with incomplete type, if it's completed later in the file. we don't. *)
+    failwith "Can't define a variable with an incomplete type "
+  else
+    let current_global = storage_class <> Some Static in
+    let old_decl = Symbols.get_opt name in
+    let check_against_previous Symbols.{ t; attrs } =
+      if t <> var_type then failwith "Variable redeclared with different type"
+      else
+        match attrs with
+        | StaticAttr { global = prev_global; init = prev_init } ->
+            let global =
+              if storage_class = Some Extern then prev_global
+              else if current_global = prev_global then current_global
+              else failwith "Conflicting variable linkage"
+            in
+            let init =
+              match (prev_init, static_init) with
+              | Initial _, Initial _ ->
+                  failwith "Conflicting global variable definition"
+              | Initial _, _ -> prev_init
+              | Tentative, (Tentative | NoInitializer) -> Tentative
+              | _, Initial _ | NoInitializer, _ -> static_init
+            in
+            (global, init)
+        | _ ->
+            failwith
+              "Internal error, file-scope variable previously declared as \
+               local variable or function" [@coverage off]
+    in
+    let global, init =
+      Option.map_default check_against_previous
+        (current_global, static_init)
+        old_decl
+    in
+    Symbols.add_static_var name ~t:var_type ~global ~init;
+    (* Okay to drop initializer b/c it's never used after this pass *)
+    T.{ name; var_type; init = None; storage_class }
 
 let typecheck_global_decl = function
   | U.FunDecl fd -> T.FunDecl (typecheck_fn_decl fd)
   | VarDecl vd -> VarDecl (typecheck_file_scope_var_decl vd)
+  | StructDecl sd -> StructDecl (typecheck_struct_decl sd)
 
 let typecheck (U.Program decls) =
   T.Program (List.map typecheck_global_decl decls)
