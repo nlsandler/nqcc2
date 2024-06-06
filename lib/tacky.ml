@@ -53,6 +53,7 @@ type instruction =
       dst : tacky_val;
     }
   | CopyToOffset of { src : tacky_val; dst : string; offset : int }
+  | CopyFromOffset of { src : string; offset : int; dst : tacky_val }
   | Jump of string
   | JumpIfZero of tacky_val * string
   | JumpIfNotZero of tacky_val * string

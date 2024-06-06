@@ -102,6 +102,8 @@ let pp_instruction out = function
         pp_tacky_val index scale
   | CopyToOffset { src; dst; offset } ->
       Format.fprintf out "%s[offset = %d] = %a" dst offset pp_tacky_val src
+  | CopyFromOffset { src; offset; dst } ->
+      Format.fprintf out "%a = %s[offset = %d]" pp_tacky_val dst src offset
 
 let pp_function_definition global name params out body =
   Format.pp_open_vbox out 0;
