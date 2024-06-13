@@ -1,15 +1,18 @@
-open Batteries
-
 type member_entry = { member_type : Types.t; offset : int }
 
-type struct_entry = {
+type type_def = {
   alignment : int;
   size : int;
-  members : (string, member_entry) Map.t;
+  members : (string * member_entry) list;
 }
 
-val add_struct_definition : string -> struct_entry -> unit
+type type_entry = Ast.CommonAst.which * type_def option
+
+val add_type_definition : string -> type_entry -> unit
 val mem : string -> bool
-val find : string -> struct_entry
-val get_members : string -> member_entry list
+val find : string -> type_entry
+val find_opt : string -> type_entry option
+val get_members : string -> (string * member_entry) list
 val get_member_types : string -> Types.t list
+val get_size : string -> int
+val get_type : string -> Types.t

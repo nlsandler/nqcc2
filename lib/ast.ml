@@ -30,7 +30,13 @@ module CommonAst = struct
   type member_declaration = { member_name : string; member_type : Types.t }
   [@@deriving show]
 
-  type struct_declaration = { tag : string; members : member_declaration list }
+  type which = Struct | Union [@@deriving show]
+
+  type struct_or_union_declaration = {
+    struct_or_union : which;
+    tag : string;
+    members : member_declaration list;
+  }
   [@@deriving show]
 
   type 'init_t variable_declaration = {
@@ -110,7 +116,8 @@ module CommonAst = struct
   and ('init_t, 'exp_t) declaration =
     | FunDecl of ('init_t, 'exp_t) function_declaration
     | VarDecl of 'init_t variable_declaration
-    | StructDecl of struct_declaration
+    | TypeDecl of struct_or_union_declaration
+  [@@deriving show]
 
   type ('init_t, 'exp_t) prog_t =
     | Program of ('init_t, 'exp_t) declaration list
@@ -138,8 +145,8 @@ module Untyped = struct
     | Subscript of { ptr : exp; index : exp }
     | SizeOf of exp
     | SizeOfT of Types.t
-    | Dot of { strct : exp; member : string }
-    | Arrow of { strct : exp; member : string }
+    | Dot of { strct_or_union : exp; member : string }
+    | Arrow of { strct_or_union : exp; member : string }
   [@@deriving show]
 
   type initializr = SingleInit of exp | CompoundInit of initializr list
@@ -178,8 +185,8 @@ module Typed = struct
     | Subscript of { ptr : exp; index : exp }
     | SizeOf of exp
     | SizeOfT of Types.t
-    | Dot of { strct : exp; member : string }
-    | Arrow of { strct : exp; member : string }
+    | Dot of { strct_or_union : exp; member : string }
+    | Arrow of { strct_or_union : exp; member : string }
   [@@deriving show]
 
   and exp = { e : inner_exp; t : Types.t }

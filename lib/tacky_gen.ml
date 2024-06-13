@@ -35,13 +35,16 @@ let get_ptr_scale = function
 
 let get_member_offset member = function
   | Types.Structure tag -> (
-      try[@coverage off] Map.(Type_table.(find tag).members --> member).offset
+      try[@coverage off]
+        let members = Type_table.get_members tag in
+        (List.assoc member members).offset
       with Not_found ->
         failwith
           ("Internal error: failed to find member "
           ^ member
           ^ " in structure "
           ^ tag))
+  | Types.Union _tag -> 0
   | t ->
       failwith
         ("Internal error: tried to get offset of member "
@@ -136,8 +139,9 @@ let rec emit_tacky_for_exp Ast.{ e; t } =
   | Ast.Subscript { ptr; index } -> emit_subscript t ptr index
   | Ast.SizeOfT t -> ([], PlainOperand (eval_size t))
   | Ast.SizeOf inner -> ([], PlainOperand (eval_size inner.t))
-  | Dot { strct; member } -> emit_dot_operator t strct member
-  | Arrow { strct; member } -> emit_arrow_operator t strct member
+  | Dot { strct_or_union; member } -> emit_dot_operator t strct_or_union member
+  | Arrow { strct_or_union; member } ->
+      emit_arrow_operator t strct_or_union member
 
 (* helper functions for individual expression *)
 and emit_unary_expression t op inner =
@@ -620,12 +624,18 @@ let rec emit_compound_init name offset = function
       in
       List.flatten (List.mapi handle_init inits)
   | Ast.CompoundInit (Structure tag, inits) ->
-      let members = Type_table.get_members tag in
+      let members = List.map snd (Type_table.get_members tag) in
       let process_init memb init =
         let mem_offset = offset + Type_table.(memb.offset) in
         emit_compound_init name mem_offset init
       in
       List.flatten (List.map2 process_init members inits)
+  | Ast.CompoundInit (Union _tag, [ init ]) ->
+      emit_compound_init name offset init
+  | Ast.CompoundInit (Union _tag, _) ->
+      failwith
+        "Internal error: compound init for union doesn't have exactly one \
+         element"
   | Ast.CompoundInit (_, _) ->
       failwith "Internal error: compound init has non-array type!"
       [@coverage off]
@@ -671,7 +681,7 @@ and emit_local_declaration = function
   | Ast.VarDecl { storage_class = Some _; _ } -> []
   | Ast.VarDecl vd -> emit_var_declaration vd
   | Ast.FunDecl _ -> []
-  | Ast.StructDecl _ -> []
+  | Ast.TypeDecl _ -> []
 
 and emit_var_declaration = function
   | {

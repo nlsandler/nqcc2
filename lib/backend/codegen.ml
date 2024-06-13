@@ -101,7 +101,7 @@ let convert_type = function
   | Long | ULong | Pointer _ -> Quadword
   | Char | SChar | UChar -> Byte
   | Double -> Double
-  | (Array _ | Structure _) as t ->
+  | (Array _ | Structure _ | Union _) as t ->
       ByteArray
         { size = Type_utils.get_size t; alignment = Type_utils.get_alignment t }
   | (FunType _ | Void) as t ->
@@ -207,45 +207,72 @@ let convert_dbl_comparison op dst_t asm_src1 asm_src2 asm_dst =
 
 type cls = Mem | SSE | Integer
 
-let classify_new_structure tag =
-  let Type_table.{ size; _ } = Type_table.find tag in
+let classify_new_type tag =
+  let size = Type_table.get_size tag in
   if size > 16 then
     let eightbyte_count = (size / 8) + if size mod 8 = 0 then 0 else 1 in
     List.make eightbyte_count Mem
   else
-    let rec f = function
-      | Types.Structure struct_tag ->
-          let member_types = Type_table.get_member_types struct_tag in
-          List.concat_map f member_types
-      | Array { elem_type; size } -> List.flatten (List.make size (f elem_type))
-      | t -> [ t ]
+    (* Helper function to determine class of each eightbyte *)
+    let rec classify_eightbytes offset (first_eightbyte, second_eightbyte) =
+      function
+      | Types.Double -> (* this is default *) (first_eightbyte, second_eightbyte)
+      | t when Type_utils.is_scalar t ->
+          if offset < 8 then (Integer, second_eightbyte)
+          else (first_eightbyte, Integer)
+      | Union tag ->
+          (* fold over members *)
+          let member_types = Type_table.get_member_types tag in
+          List.fold_left
+            (classify_eightbytes offset)
+            (first_eightbyte, second_eightbyte)
+            member_types
+      | Structure tag ->
+          (* fold over members, updating offsets*)
+          let members = Type_table.get_members tag in
+          let f (one, two) (_, member_info) =
+            classify_eightbytes
+              (offset + member_info.Type_table.offset)
+              (one, two) member_info.member_type
+          in
+          List.fold_left f (first_eightbyte, second_eightbyte) members
+      | Array { elem_type; size } ->
+          let elem_size = Type_utils.get_size elem_type in
+          let rec f (one, two) idx =
+            if idx = size then (one, two)
+            else
+              let one', two' =
+                classify_eightbytes
+                  (offset + (idx * elem_size))
+                  (one, two) elem_type
+              in
+              f (one', two') (idx + 1)
+          in
+          f (first_eightbyte, second_eightbyte) 0
+      | _ -> failwith "Internal error"
     in
+    let class1, class2 =
+      classify_eightbytes 0 (SSE, SSE) (Type_table.get_type tag)
+    in
+    if size > 8 then [ class1; class2 ] else [ class1 ]
 
-    let scalar_types = f (Structure tag) in
-    let first, last = (List.hd scalar_types, List.last scalar_types) in
-    if size > 8 then
-      let first_class = if first = Double then SSE else Integer in
-      let last_class = if last = Double then SSE else Integer in
-      [ first_class; last_class ]
-    else if first = Double then [ SSE ]
-    else [ Integer ]
+(* memoize results of classify_type *)
+let classified_types = Hashtbl.create 10
 
-(* memoize results of classify_structure *)
-let classified_structures = Hashtbl.create 10
-
-let classify_structure tag =
-  match Hashtbl.find_option classified_structures tag with
+let classify_type tag =
+  match Hashtbl.find_option classified_types tag with
   | Some classes -> classes
   | None ->
-      let classes = classify_new_structure tag in
-      Hashtbl.add classified_structures tag classes;
+      let classes = classify_new_type tag in
+      Hashtbl.add classified_types tag classes;
       classes
 
 let classify_tacky_val v =
   match tacky_type v with
-  | Structure tag -> classify_structure tag
+  | Structure tag -> classify_type tag
+  | Union tag -> classify_type tag
   | _ ->
-      failwith "Internal error: trying to classify non-structure type"
+      failwith "Internal error: trying to classify non-structure or union type"
       [@coverage off]
 
 let classify_parameters tacky_vals return_on_stack =
@@ -264,7 +291,7 @@ let classify_parameters tacky_vals return_on_stack =
           (typed_operand :: int_reg_args, dbl_reg_args, stack_args)
         else (int_reg_args, dbl_reg_args, typed_operand :: stack_args)
     | ByteArray _ ->
-        (* it's a structure *)
+        (* it's a structure or union *)
         let var_name =
           match v with
           | Tacky.Var n -> n
@@ -329,36 +356,39 @@ let classify_parameters tacky_vals return_on_stack =
 let classify_return_value retval =
   let open Assembly in
   let retval_type = tacky_type retval in
-  match retval_type with
-  | Types.Structure tag ->
-      let classes = classify_structure tag in
-      let var_name =
-        match retval with
-        | Tacky.Var n -> n
-        | Constant _ ->
-            failwith "Internal error: constant with structure type"
-            [@coverage off]
+  let classify_return_val_helper tag =
+    let classes = classify_type tag in
+    let var_name =
+      match retval with
+      | Tacky.Var n -> n
+      | Constant _ ->
+          failwith "Internal error: constant with structure type"
+          [@coverage off]
+    in
+    if List.hd classes = Mem then ([], [], true)
+    else
+      (* return in registers, can move everything w/ quadword operands *)
+      let process_quadword (ints, dbls) i cls =
+        let operand = PseudoMem (var_name, i * 8) in
+        match cls with
+        | SSE -> (ints, dbls @ [ operand ])
+        | Integer ->
+            let eightbyte_type =
+              get_eightbyte_type ~eightbyte_idx:i
+                ~total_var_size:(Type_utils.get_size retval_type)
+            in
+            (ints @ [ (eightbyte_type, operand) ], dbls)
+        | Mem ->
+            failwith
+              "Internal error: found eightbyte in Mem class, but first \
+               eighbyte wasn't Mem" [@coverage off]
       in
-      if List.hd classes = Mem then ([], [], true)
-      else
-        (* return in registers, can move everything w/ quadword operands *)
-        let process_quadword (ints, dbls) i cls =
-          let operand = PseudoMem (var_name, i * 8) in
-          match cls with
-          | SSE -> (ints, dbls @ [ operand ])
-          | Integer ->
-              let eightbyte_type =
-                get_eightbyte_type ~eightbyte_idx:i
-                  ~total_var_size:(Type_utils.get_size retval_type)
-              in
-              (ints @ [ (eightbyte_type, operand) ], dbls)
-          | Mem ->
-              failwith
-                "Internal error: found eightbyte in Mem class, but first \
-                 eighbyte wasn't Mem" [@coverage off]
-        in
-        let i, d = List.fold_lefti process_quadword ([], []) classes in
-        (i, d, false)
+      let i, d = List.fold_lefti process_quadword ([], []) classes in
+      (i, d, false)
+  in
+  match retval_type with
+  | Types.Structure tag -> classify_return_val_helper tag
+  | Types.Union tag -> classify_return_val_helper tag
   | Double ->
       let asm_val = convert_val retval in
       ([], [ asm_val ], false)
@@ -887,7 +917,9 @@ let pass_params param_list return_on_stack =
 let returns_on_stack fn_name =
   match (Symbols.get fn_name).t with
   | Types.FunType { ret_type = Structure tag; _ } -> (
-      match classify_structure tag with Mem :: _ -> true | _ -> false)
+      match classify_type tag with Mem :: _ -> true | _ -> false)
+  | Types.FunType { ret_type = Union tag; _ } -> (
+      match classify_type tag with Mem :: _ -> true | _ -> false)
   | FunType _ -> false
   | _ -> failwith "Internal error: not a function name" [@coverage off]
 

@@ -1,25 +1,38 @@
 open Batteries
 
-(* structure type definitions *)
+(* structure and union type definitions *)
+
 type member_entry = { member_type : Types.t; offset : int }
 
-type struct_entry = {
+type type_def = {
   alignment : int;
   size : int;
-  members : (string, member_entry) Map.t;
+  members : (string * member_entry) list; (* in declaration order *)
 }
 
-let (type_table : (string, struct_entry) Hashtbl.t) = Hashtbl.create 20
+type type_entry = Ast.CommonAst.which * type_def option
 
-let add_struct_definition tag struct_def =
-  Hashtbl.replace type_table tag struct_def
-
+let (type_table : (string, type_entry) Hashtbl.t) = Hashtbl.create 20
+let add_type_definition tag type_def = Hashtbl.replace type_table tag type_def
 let mem tag = Hashtbl.mem type_table tag
 let find tag = Hashtbl.find type_table tag
+let find_opt tag = Hashtbl.find_option type_table tag
 
 let get_members tag =
-  let struct_def = find tag in
-  let compare_offset m1 m2 = compare m1.offset m2.offset in
-  Map.values struct_def.members |> List.of_enum |> List.sort compare_offset
+  let _, type_def = find tag in
+  match type_def with
+  | Some td -> td.members
+  | None -> failwith "No member definitions"
 
-let get_member_types tag = List.map (fun m -> m.member_type) (get_members tag)
+let get_member_types tag =
+  List.map (fun (_, m) -> m.member_type) (get_members tag)
+
+let get_size tag =
+  let _, type_def = find tag in
+  match type_def with Some td -> td.size | None -> failwith "Incomplete type"
+
+(* Helper function to reconstruct Types.t from a tag*)
+let get_type tag =
+  match find tag with
+  | Ast.CommonAst.Struct, _ -> Types.Structure tag
+  | Union, _ -> Types.Union tag
