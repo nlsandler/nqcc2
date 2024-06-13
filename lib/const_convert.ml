@@ -35,7 +35,7 @@ module IntCastEvaluator (C : Castable) = struct
     | Long -> ConstLong (C.to_int64 v)
     | ULong | Pointer _ -> ConstULong (v |> C.to_int64 |> UInt64.of_int64)
     | Double -> ConstDouble (C.to_float v)
-    | (FunType _ | Array _ | Void | Structure _) as t ->
+    | (FunType _ | Array _ | Void | Structure _ | Union _) as t ->
         failwith
           ("Internal error: cannot cast constant to non-scalar " ^ T.show t)
         [@coverage off]

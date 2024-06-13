@@ -17,4 +17,5 @@ type t =
           Format.fprintf fmt "(%a, %d)" pp elem_type size]
   | FunType of { param_types : t list; ret_type : t }
   | Structure of string (* tag *)
+  | Union of string (* tag *)
 [@@deriving show { with_path = false }]

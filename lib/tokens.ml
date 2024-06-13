@@ -38,6 +38,7 @@ type t =
   | KWExtern
   | KWSizeOf
   | KWStruct
+  | KWUnion
   (* punctuation *)
   | OpenParen
   | CloseParen

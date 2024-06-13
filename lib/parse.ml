@@ -112,7 +112,7 @@ let unescape s =
 
 let is_type_specifier = function
   | T.KWInt | KWLong | KWUnsigned | KWSigned | KWDouble | KWChar | KWVoid
-  | KWStruct ->
+  | KWStruct | KWUnion ->
       true
   | _ -> false
 
@@ -120,18 +120,31 @@ let is_specifier = function
   | T.KWStatic | KWExtern -> true
   | other -> is_type_specifier other
 
+(* One-off type to represent specifiers (helps us distinguish b/t struct and union tags) *)
+type specifier =
+  | StructTag of string
+  | UnionTag of string
+  | OtherSpec of Tokens.t (* this could be a type or storage class specifier *)
+[@@deriving ord]
+
 let parse_type_specifier tokens =
   match peek tokens with
-  (* if the specifier is a struct kw, we actually care about the tag that follows it *)
+  (* if the specifier is a struct or union, we actually care about the tag that follows it *)
   | T.KWStruct -> (
       Stream.junk tokens;
       (* struct keyword must be followed by tag*)
       match Stream.next tokens with
-      | T.Identifier _ as tag -> tag
+      | T.Identifier tag -> StructTag tag
       | t -> raise_error ~expected:(Name "a structure tag") ~actual:t)
+  | T.KWUnion -> (
+      Stream.junk tokens;
+      (* struct keyword must be followed by tag*)
+      match Stream.next tokens with
+      | T.Identifier tag -> UnionTag tag
+      | t -> raise_error ~expected:(Name "a union tag") ~actual:t)
   | t when is_type_specifier t ->
       Stream.junk tokens;
-      t
+      OtherSpec t
   | t ->
       failwith
         ("Internal error: called parse_type_specifier on non-type specifier \
@@ -142,7 +155,7 @@ let parse_specifier tokens =
   match peek tokens with
   | (T.KWStatic | KWExtern) as spec ->
       Stream.junk tokens;
-      spec
+      OtherSpec spec
   | _ -> parse_type_specifier tokens
 
 let rec parse_type_specifier_list tokens =
@@ -165,45 +178,55 @@ let parse_storage_class = function
 let parse_type specifier_list =
   (* sort specifiers so we don't need to check for different
    * orderings of same specifiers *)
-  let specifier_list = List.sort Tokens.compare specifier_list in
-  let is_ident = function T.Identifier _ -> true | _ -> false in
+  let specifier_list = List.sort compare_specifier specifier_list in
   match specifier_list with
-  | [ T.Identifier tag ] -> Types.Structure tag
-  | [ T.KWVoid ] -> Types.Void
-  | [ T.KWDouble ] -> Types.Double
-  | [ T.KWChar ] -> Types.Char
-  | [ T.KWChar; T.KWSigned ] -> Types.SChar
-  | [ T.KWChar; T.KWUnsigned ] -> Types.UChar
-  | _ ->
-      if
-        specifier_list = []
-        || List.length specifier_list
-           <> List.length (List.unique specifier_list)
-        || List.mem T.KWDouble specifier_list
-        || List.mem T.KWChar specifier_list
-        || List.mem T.KWVoid specifier_list
-        || List.exists is_ident specifier_list
-        || List.mem T.KWSigned specifier_list
-           && List.mem T.KWUnsigned specifier_list
-      then failwith "Invalid type specifier"
-      else if
-        List.mem T.KWUnsigned specifier_list && List.mem T.KWLong specifier_list
-      then Types.ULong
-      else if List.mem T.KWUnsigned specifier_list then Types.UInt
-      else if List.mem T.KWLong specifier_list then Types.Long
-      else Types.Int
+  (* First handle struct/union tags *)
+  | [ StructTag tag ] -> Types.Structure tag
+  | [ UnionTag tag ] -> Types.Union tag
+  | _ -> (
+      (* Make sure we don't have struct/union specifier combined with other type specifier;
+         * then convert list of specifiers to list of tokens for easier processing
+      *)
+      let get_tok = function
+        | OtherSpec t -> t
+        | _ ->
+            failwith
+              "Found struct or union tag combined with other type specifiers"
+      in
+      let toks = List.map get_tok specifier_list in
+      match toks with
+      | [ T.KWVoid ] -> Types.Void
+      | [ T.KWDouble ] -> Types.Double
+      | [ T.KWChar ] -> Types.Char
+      | [ T.KWChar; T.KWSigned ] -> Types.SChar
+      | [ T.KWChar; T.KWUnsigned ] -> Types.UChar
+      | _ ->
+          if
+            toks = []
+            || List.length toks <> List.length (List.unique toks)
+            || List.mem T.KWDouble toks
+            || List.mem T.KWChar toks
+            || List.mem T.KWVoid toks
+            || (List.mem T.KWSigned toks && List.mem T.KWUnsigned toks)
+          then failwith "Invalid type specifier"
+          else if List.mem T.KWUnsigned toks && List.mem T.KWLong toks then
+            Types.ULong
+          else if List.mem T.KWUnsigned toks then Types.UInt
+          else if List.mem T.KWLong toks then Types.Long
+          else Types.Int)
 
 let parse_type_and_storage_class specifier_list =
   let storage_classes, types =
     List.partition
-      (fun tok -> tok = T.KWExtern || tok = KWStatic)
+      (function
+        | OtherSpec tok -> tok = T.KWExtern || tok = KWStatic | _ -> false)
       specifier_list
   in
   let typ = parse_type types in
   let storage_class =
     match storage_classes with
     | [] -> None
-    | [ sc ] -> Some (parse_storage_class sc)
+    | [ OtherSpec sc ] -> Some (parse_storage_class sc)
     | _ :: _ -> failwith "Invalid storage class"
   in
   (typ, storage_class)
@@ -567,12 +590,12 @@ and postfix_helper primary tokens =
   | T.Dot ->
       Stream.junk tokens;
       let member = parse_id tokens in
-      let member_exp = Ast.Dot { strct = primary; member } in
+      let member_exp = Ast.Dot { strct_or_union = primary; member } in
       postfix_helper member_exp tokens
   | T.Arrow ->
       Stream.junk tokens;
       let member = parse_id tokens in
-      let arrow_exp = Ast.Arrow { strct = primary; member } in
+      let arrow_exp = Ast.Arrow { strct_or_union = primary; member } in
       postfix_helper arrow_exp tokens
   | _ -> primary
 
@@ -888,8 +911,8 @@ and finish_parsing_variable_declaration var_type storage_class name tokens =
 and parse_declaration tokens =
   (* first figure out whether this is a struct declaraion *)
   match Stream.npeek 3 tokens with
-  | [ T.KWStruct; Identifier _; (OpenBrace | Semicolon) ] ->
-      parse_structure_declaration tokens
+  | [ (T.KWStruct | T.KWUnion); Identifier _; (OpenBrace | Semicolon) ] ->
+      parse_type_declaration tokens
   | _ -> (
       let specifiers = parse_specifier_list tokens in
       let base_typ, storage_class = parse_type_and_storage_class specifiers in
@@ -910,9 +933,11 @@ and parse_declaration tokens =
             failwith "Internal error: declarator has parameters but object type"
             [@coverage off])
 
-(* <struct-declaration> ::= "struct" <identifier> [ "{" { <member-declaration> }+ "}" ] ";" *)
-and parse_structure_declaration tokens =
-  expect T.KWStruct tokens;
+(* <struct-or-union> ::= "struct" | "union"
+ * <type-declaration> ::= <struct-or-union> <identifier> [ "{" { <member-declaration> }+ "}" ] ";"
+ *)
+and parse_type_declaration tokens =
+  let struct_or_union_kw = Stream.next tokens in
   let tag = parse_id tokens in
   let members =
     match Stream.next tokens with
@@ -927,7 +952,16 @@ and parse_structure_declaration tokens =
           "Internal error: shouldn't have called parse_structure_declaration \
            here" [@coverage off]
   in
-  StructDecl { tag; members }
+  let struct_or_union =
+    match struct_or_union_kw with
+    | T.KWStruct -> Ast.Struct
+    | T.KWUnion -> Ast.Union
+    | _ ->
+        failwith
+          "Internal error: shouldn't have called parse_structure_declaration \
+           here" [@coverage off]
+  in
+  Ast.TypeDecl { tag; members; struct_or_union }
 
 (* parse a non-empty member list *)
 and parse_member_list tokens =
@@ -956,10 +990,10 @@ and parse_member tokens =
 and parse_variable_declaration tokens =
   match parse_declaration tokens with
   | VarDecl vd -> vd
-  | FunDecl _ | StructDecl _ ->
+  | FunDecl _ | TypeDecl _ ->
       raise
         (ParseError
-           "Expected variable declaration but found function or structure \
+           "Expected variable declaration but found function or type \
             declaration")
 
 (* <for-init> ::= <declaration> | [ <exp> ] ";" *)

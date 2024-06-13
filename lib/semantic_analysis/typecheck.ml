@@ -13,7 +13,7 @@ end
 let rec is_lvalue T.{ e; _ } =
   match e with
   | T.Dereference _ | T.Subscript _ | T.Var _ | T.String _ | T.Arrow _ -> true
-  | T.Dot { strct; _ } -> is_lvalue strct
+  | T.Dot { strct_or_union; _ } -> is_lvalue strct_or_union
   | _ -> false
 
 let rec validate_type = function
@@ -24,62 +24,119 @@ let rec validate_type = function
   | FunType { param_types; ret_type } ->
       List.iter validate_type param_types;
       validate_type ret_type
-  | Char | SChar | UChar | Int | Long | UInt | ULong | Double | Void
-  | Structure _ ->
-      ()
+  | Structure tag -> (
+      match Type_table.find_opt tag with
+      | Some (Ast.CommonAst.Union, _) ->
+          failwith "Tag previously specified struct, now specifies union"
+          (* Otherwise, either previously added as struct or, if we're just processing its definition now, not at all *)
+      | _ -> ())
+  | Union tag -> (
+      match Type_table.find_opt tag with
+      | Some (Struct, _) ->
+          failwith "Tag previously specified struct, now specifies union"
+      (* Otherwise, either previously added as union or, if we're just processing its definition now, not at all *)
+      | _ -> ())
+  | Char | SChar | UChar | Int | Long | UInt | ULong | Double | Void -> ()
 
-let validate_struct_definition U.{ tag; members } =
-  (* make sure it's not already in the type table *)
-  if Type_table.mem tag then failwith "Structure was already declared"
-  else
-    (* check for duplicate number names *)
-    let member_names = ref Set.empty in
-    let validate_member U.{ member_name; member_type } =
-      if Set.mem member_name !member_names then
+(* Common validation for type and union declarations *)
+let validate_type_definition U.{ tag; members; struct_or_union } =
+  (* first check for conflicting definition in type table *)
+  (match Type_table.find_opt tag with
+  | None -> () (* No previous declaration of this tag *)
+  | Some (kind, contents) -> (
+      (* did we declare this tag with the same sort of type (struct vs. union) both times? *)
+      if kind <> struct_or_union then
         failwith
-          ("Duplicate declaration of member "
-          ^ member_name
-          ^ " in structure "
-          ^ tag)
-      else member_names := Set.add member_name !member_names;
-      (* validate member type *)
-      validate_type member_type;
-      match member_type with
-      | Types.FunType _ ->
-          (* this is redundant, we'd already reject this in parser *)
-          failwith "Can't declare structure member with function type"
-      | _ ->
-          if is_complete member_type then ()
-          else failwith "Cannot declare structure member with incomplete type"
-    in
-    List.iter validate_member members
+          (Printf.sprintf
+             "Conflicting definitions of %s: defined as %s, then %s." tag
+             (U.show_which kind)
+             (U.show_which struct_or_union));
+      (* Did we include a member list both times? *)
+      match (members, contents) with
+      | _ :: _, Some _ ->
+          failwith (Printf.sprintf "Contents of tag %s defined twice" tag)
+      | _ -> ()));
+  (* check for duplicate number names *)
+  let member_names = ref Set.empty in
+  let validate_member U.{ member_name; member_type } =
+    if Set.mem member_name !member_names then
+      failwith
+        ("Duplicate declaration of member "
+        ^ member_name
+        ^ " in structure "
+        ^ tag)
+    else member_names := Set.add member_name !member_names;
+    (* validate member type *)
+    validate_type member_type;
+    match member_type with
+    | Types.FunType _ ->
+        (* this is redundant, we'd already reject this in parser *)
+        failwith "Can't declare structure or union member with function type"
+    | _ ->
+        if is_complete member_type then ()
+        else
+          failwith
+            "Cannot declare structure or union member with incomplete type"
+  in
+  List.iter validate_member members
 
-let typecheck_struct_decl (U.{ tag; members } as sd) =
-  if List.is_empty members then (* ignore forward declarations *) ()
-  else (
-    (* validate the definition, then add it to the type table *)
-    validate_struct_definition sd;
-    let build_member_def (current_size, current_alignment, current_members)
-        U.{ member_name; member_type } =
-      let member_alignment = get_alignment member_type in
-      let offset =
-        Rounding.round_away_from_zero member_alignment current_size
-      in
-      let member_entry = Type_table.{ member_type; offset } in
-      let new_alignment = max current_alignment member_alignment in
-      let new_size = offset + get_size member_type in
-      let new_members = Map.(current_members <-- (member_name, member_entry)) in
-      (new_size, new_alignment, new_members)
-    in
-    let unpadded_size, alignment, member_defs =
-      List.fold_left build_member_def (0, 1, Map.empty) members
-    in
-    let size = Rounding.round_away_from_zero alignment unpadded_size in
-    let struct_def = Type_table.{ alignment; size; members = member_defs } in
-    Type_table.add_struct_definition tag struct_def);
+let build_struct_def members =
+  let build_member_def (current_size, current_alignment)
+      U.{ member_name; member_type } =
+    let member_alignment = get_alignment member_type in
+    let offset = Rounding.round_away_from_zero member_alignment current_size in
+    let member_entry = Type_table.{ member_type; offset } in
+    let new_alignment = max current_alignment member_alignment in
+    let new_size = offset + get_size member_type in
+    ((new_size, new_alignment), (member_name, member_entry))
+  in
+  let (unpadded_size, alignment), member_defs =
+    List.fold_left_map build_member_def (0, 1) members
+  in
+  let size = Rounding.round_away_from_zero alignment unpadded_size in
+  Type_table.{ alignment; size; members = member_defs }
 
-  (* actual conversion to new type is trivial  *)
-  T.{ tag; members }
+let build_union_def members =
+  (* All union members have an offset of 0 *)
+  let build_member_def (current_size, current_alignment)
+      U.{ member_type; member_name } =
+    let new_size = max current_size (get_size member_type) in
+    let new_alignment = max current_alignment (get_alignment member_type) in
+    let entry = (member_name, Type_table.{ member_type; offset = 0 }) in
+    ((new_size, new_alignment), entry)
+  in
+  let (unpadded_size, alignment), member_defs =
+    List.fold_left_map build_member_def (0, 1) members
+  in
+  let size = Rounding.round_away_from_zero alignment unpadded_size in
+  Type_table.{ alignment; size; members = member_defs }
+
+let typecheck_type_decl (U.{ tag; members; struct_or_union } as td) =
+  (* first validate the definition *)
+  validate_type_definition td;
+
+  (* Next, the build type table entry. We can skip this if we've already
+   * defined this type (including its contents). But if it's not already in
+   * the type table, we'll add it now, even if this is just a declaration
+   * (rather than a definition), so we can distinguish conflicting struct/union
+   * declarations *)
+  (let t =
+     match struct_or_union with
+     | U.Struct -> Types.Structure tag
+     | U.Union -> Types.Union tag
+   in
+   if not (is_complete t) then
+     let type_def =
+       if List.is_empty members then None
+       else
+         Some
+           (match struct_or_union with
+           | U.Struct -> build_struct_def members
+           | U.Union -> build_union_def members)
+     in
+     Type_table.add_type_definition tag (struct_or_union, type_def));
+  (* actual conversion to new AST node is trivial  *)
+  T.{ tag; members; struct_or_union }
 
 let convert_to e target_type =
   let cast = T.Cast { target_type; e } in
@@ -176,8 +233,10 @@ let rec typecheck_exp = function
   | Subscript { ptr; index } -> typecheck_subscript ptr index
   | SizeOfT t -> typecheck_size_of_t t
   | SizeOf e -> typecheck_size_of e
-  | Dot { strct; member } -> typecheck_dot_operator strct member
-  | Arrow { strct; member } -> typecheck_arrow_operator strct member
+  | Dot { strct_or_union; member } ->
+      typecheck_dot_operator strct_or_union member
+  | Arrow { strct_or_union; member } ->
+      typecheck_arrow_operator strct_or_union member
 
 and typecheck_cast target_type inner =
   validate_type target_type;
@@ -476,7 +535,7 @@ and typecheck_conditional condition then_exp else_exp =
       get_common_pointer_type typed_then typed_else
     else if is_arithmetic typed_then.t && is_arithmetic typed_else.t then
       get_common_type typed_then.t typed_else.t
-      (* only other option is structure typess, this is fine if they're identical
+      (* only other option is structure/union types, this is fine if they're identical
        * (typecheck_and_convert already validated that they're complete) *)
     else if typed_then.t = typed_else.t then typed_then.t
     else failwith "Invalid operands for conditional"
@@ -563,44 +622,65 @@ and typecheck_size_of inner =
 and typecheck_and_convert e =
   let typed_e = typecheck_exp e in
   match typed_e.t with
-  | Types.Structure _ when not (is_complete typed_e.t) ->
+  | (Types.Structure _ | Types.Union _) when not (is_complete typed_e.t) ->
       failwith "Incomplete structure type not permitted here"
   | Types.Array { elem_type; _ } ->
       let addr_exp = T.AddrOf typed_e in
       set_type addr_exp (Pointer elem_type)
   | _ -> typed_e
 
-and typecheck_dot_operator strct member =
-  let typed_strct = typecheck_and_convert strct in
-  match typed_strct.t with
-  | Types.Structure tag ->
-      (* typecheck_and_convert already validated that this structure type is complete *)
-      let struct_def = Type_table.find tag in
-      let member_typ =
-        try Map.(struct_def.members --> member).member_type
-        with Not_found ->
-          failwith ("Struct type " ^ tag ^ " has no member " ^ member)
-      in
-      let dot_exp = T.Dot { strct = typed_strct; member } in
-      set_type dot_exp member_typ
-  | _ ->
-      failwith
-        "Dot operator can only be applied to expressions with structure type"
+and typecheck_dot_operator strct_or_union member =
+  let typed_strct_or_union = typecheck_and_convert strct_or_union in
+  (* Look up definition of base struct/union in the type table *)
+  let tag =
+    match typed_strct_or_union.t with
+    | Types.Structure tag -> tag
+    | Types.Union tag -> tag
+    | _ ->
+        failwith
+          "Dot operator can only be applied to expressions with structure or \
+           union type"
+  in
+  (* typecheck_and_convert already validated that this structure type is complete *)
+  let inner_type_members = Type_table.get_members tag in
+  let member_typ =
+    try (List.assoc member inner_type_members).member_type
+    with Not_found ->
+      failwith ("Struct/union type " ^ tag ^ " has no member " ^ member)
+  in
+  let dot_exp = T.Dot { strct_or_union = typed_strct_or_union; member } in
+  set_type dot_exp member_typ
 
-and typecheck_arrow_operator strct_ptr member =
-  let typed_strct_ptr = typecheck_and_convert strct_ptr in
-  match typed_strct_ptr.t with
-  | Types.Pointer (Structure tag) ->
-      let struct_def = Type_table.find tag in
-      let member_typ =
-        try Map.(struct_def.members --> member).member_type
-        with Not_found ->
-          failwith
-            ("Struct type " ^ tag ^ " is incomplete or has no member " ^ member)
-      in
-      let arrow_exp = T.Arrow { strct = typed_strct_ptr; member } in
-      set_type arrow_exp member_typ
-  | _ -> failwith "Arrow operator can only be applied to pointers to structure"
+and typecheck_arrow_operator strct_or_union_ptr member =
+  let typed_strct_or_union_ptr = typecheck_and_convert strct_or_union_ptr in
+  (* Validate that this is a pointer to a complete type *)
+  let _ =
+    if not (is_complete_pointer typed_strct_or_union_ptr.t) then
+      failwith
+        "Arrow operator can only be applied to pointers to complete structure \
+         or union types"
+  in
+  (* Make sure it's a pointer to a struct or union type specifically *)
+  let tag =
+    match typed_strct_or_union_ptr.t with
+    | Types.Pointer (Structure tag) -> tag
+    | Types.Pointer (Union tag) -> tag
+    | _ ->
+        failwith
+          "Arrow operator can only be applied to pointers to complete \
+           structure or union types"
+  in
+  (* Figure out member type *)
+  let inner_type_members = Type_table.get_members tag in
+  let member_typ =
+    try (List.assoc member inner_type_members).member_type
+    with Not_found ->
+      failwith ("Struct/union type " ^ tag ^ " has no member " ^ member)
+  in
+  let arrow_exp =
+    T.Arrow { strct_or_union = typed_strct_or_union_ptr; member }
+  in
+  set_type arrow_exp member_typ
 
 let rec static_init_helper var_type init =
   match (var_type, init) with
@@ -623,12 +703,12 @@ let rec static_init_helper var_type init =
   | _, U.SingleInit (U.String _) ->
       failwith "String literal can only initialize char *"
   | Structure tag, U.CompoundInit inits ->
-      let struct_def = Type_table.find tag in
       let members = Type_table.get_members tag in
       if List.length inits > List.length members then
         failwith "Too many elements in struct initializer"
       else
-        let handle_member (current_offset, current_inits) memb init =
+        let handle_member (current_offset, current_inits) (_memb_name, memb)
+            init =
           let padding =
             if current_offset < memb.Type_table.offset then
               [ Initializers.ZeroInit (memb.offset - current_offset) ]
@@ -643,14 +723,31 @@ let rec static_init_helper var_type init =
         let initialized_size, explicit_initializers =
           List.fold_left2 handle_member (0, []) initialized_members inits
         in
+        let struct_size = get_size var_type in
         let trailing_padding =
-          if initialized_size < struct_def.size then
-            [ Initializers.ZeroInit (struct_def.size - initialized_size) ]
+          if initialized_size < struct_size then
+            [ Initializers.ZeroInit (struct_size - initialized_size) ]
           else []
         in
         explicit_initializers @ trailing_padding
-  | Structure _, SingleInit _ ->
-      failwith " Can't initialize static structure with scalar value"
+      (* Union initializer list must have one element, initializing first member *)
+  | Union tag, U.CompoundInit [ elem ] ->
+      let member_type = List.hd (Type_table.get_member_types tag) in
+      let union_size = Type_utils.get_size var_type in
+      (* recursively initialize this member *)
+      let union_init = static_init_helper member_type elem in
+      (* if member size < total union size, add trailing padding *)
+      let initialized_size = Type_utils.get_size member_type in
+      let trailing_padding =
+        if initialized_size < union_size then
+          [ Initializers.ZeroInit (union_size - initialized_size) ]
+        else []
+      in
+      union_init @ trailing_padding
+  | Union _, U.CompoundInit _ ->
+      failwith "Compound initializer for union must have exactly one value"
+  | (Structure _ | Union _), SingleInit _ ->
+      failwith " Can't initialize static structure or union with scalar value"
   | _, U.SingleInit (U.Constant c) when is_zero_int c ->
       Initializers.zero var_type
   | Types.Pointer _, _ -> failwith "invalid static initializer for pointer"
@@ -699,9 +796,11 @@ let rec make_zero_init t =
   | Types.Array { elem_type; size } as t ->
       T.CompoundInit (t, List.make size (make_zero_init elem_type))
   | Structure tag ->
-      let members = Type_table.get_members tag in
-      T.CompoundInit
-        (t, List.map (fun m -> make_zero_init m.Type_table.member_type) members)
+      let member_types = Type_table.get_member_types tag in
+      T.CompoundInit (t, List.map make_zero_init member_types)
+  | Union tag ->
+      let member_types = Type_table.get_member_types tag in
+      T.CompoundInit (t, [ make_zero_init (List.hd member_types) ])
   | Char | SChar -> scalar (Const.ConstChar Int8.zero)
   | Int -> scalar (Const.ConstInt Int32.zero)
   | UChar -> scalar (Const.ConstUChar UInt8.zero)
@@ -723,25 +822,29 @@ let rec typecheck_init target_type init =
         failwith "Too many characters in string literal"
       else T.SingleInit (set_type (T.String s) target_type)
   | Types.Structure tag, CompoundInit init_list ->
-      let members = Type_table.get_members tag in
-      if List.length init_list > List.length members then
+      let member_types = Type_table.get_member_types tag in
+      if List.length init_list > List.length member_types then
         failwith "Too many elements in structure initializer"
       else
         let initialized_members, uninitialized_members =
-          List.takedrop (List.length init_list) members
+          List.takedrop (List.length init_list) member_types
         in
         let typechecked_members =
           List.map2
-            (fun memb init -> typecheck_init memb.Type_table.member_type init)
+            (fun member_type init -> typecheck_init member_type init)
             initialized_members init_list
         in
-        let padding =
-          List.map
-            (fun m -> make_zero_init m.Type_table.member_type)
-            uninitialized_members
-        in
+        let padding = List.map make_zero_init uninitialized_members in
 
         T.CompoundInit (target_type, typechecked_members @ padding)
+      (* Compound initializer for union must have exactly one element; it initializes the union's first member *)
+  | Types.Union tag, CompoundInit [ elem ] ->
+      let member_type = List.hd (Type_table.get_member_types tag) in
+      let typechecked_member = typecheck_init member_type elem in
+      (* don't need to zero out trailing padding for non-static unions *)
+      T.CompoundInit (target_type, [ typechecked_member ])
+  | Types.Union _tag, CompoundInit _ ->
+      failwith "Initializer list for union must have exactly one element"
   | _, U.SingleInit e ->
       let typechecked_e = typecheck_and_convert e in
       let cast_exp = convert_by_assignment typechecked_e target_type in
@@ -849,7 +952,7 @@ and typecheck_statement ret_type = function
 and typecheck_local_decl = function
   | VarDecl vd -> VarDecl (typecheck_local_var_decl vd)
   | FunDecl fd -> FunDecl (typecheck_fn_decl fd)
-  | StructDecl sd -> StructDecl (typecheck_struct_decl sd)
+  | TypeDecl td -> TypeDecl (typecheck_type_decl td)
 
 and typecheck_local_var_decl ({ name; init; storage_class; var_type } as vd) =
   if var_type = Void then failwith "No void declarations"
@@ -871,7 +974,9 @@ and typecheck_local_var_decl ({ name; init; storage_class; var_type } as vd) =
       T.{ name; init = None; storage_class; var_type }
   | _ when not (is_complete var_type) ->
       (* can't define a variable with an incomplete type *)
-      failwith "Cannot define a variable with an incomplete type"
+      failwith
+        (Printf.sprintf "Cannot define variable %s with incomplete type %s" name
+           (Types.show var_type))
   | Some Static ->
       let zero_init = Symbols.Initial (Initializers.zero var_type) in
       let static_init =
@@ -999,7 +1104,7 @@ let typecheck_file_scope_var_decl U.{ name; var_type; init; storage_class } =
 let typecheck_global_decl = function
   | U.FunDecl fd -> T.FunDecl (typecheck_fn_decl fd)
   | VarDecl vd -> VarDecl (typecheck_file_scope_var_decl vd)
-  | StructDecl sd -> StructDecl (typecheck_struct_decl sd)
+  | TypeDecl td -> TypeDecl (typecheck_type_decl td)
 
 let typecheck (U.Program decls) =
   T.Program (List.map typecheck_global_decl decls)

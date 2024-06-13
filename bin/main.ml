@@ -138,7 +138,13 @@ let extra_credit =
     let doc = "Enable support for nan" in
     (Settings.Nan, Arg.info [ "nan" ] ~doc)
   in
-  Arg.(value & vflag_all [] [ bitwise; compound; increment; goto; switch; nan ])
+  let union =
+    let doc = "Enable union types" in
+    (Settings.Union, Arg.info [ "union" ] ~doc)
+  in
+  Arg.(
+    value
+    & vflag_all [] [ bitwise; compound; increment; goto; switch; nan; union ])
 
 let debug =
   let doc =

@@ -22,6 +22,8 @@ let check_extra_credit tok =
       failwith "Unsupported extra-credit feature: goto"
   | (KWSwitch | KWCase | KWDefault) when not (flag_enabled Settings.Switch) ->
       failwith "Unsupported extra-credit feature: switch"
+  | KWUnion when not (flag_enabled Settings.Union) ->
+      failwith "Unsupported extra-credit feature: union types"
   | _ -> ()
 
 (* regular expressions for tokens *)
@@ -66,6 +68,7 @@ let id_to_tok = function
   | "char" -> KWChar
   | "sizeof" -> KWSizeOf
   | "struct" -> KWStruct
+  | "union" -> KWUnion
   | other -> Identifier other
 
 let rec lex_helper chars =
