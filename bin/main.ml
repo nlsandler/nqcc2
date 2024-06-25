@@ -54,11 +54,12 @@ let assemble_and_link ?(link = true) ?(cleanup = true) ?(libs = []) src =
     let cleanup_cmd = Printf.sprintf "rm %s" assembly_file in
     run_command cleanup_cmd
 
-let driver target debug libs extra_credit stage src =
+let driver target debug libs extra_credit int_only stage src =
   let _ =
     Settings.platform := target;
     Settings.debug := debug;
-    Settings.extra_credit_flags := extra_credit
+    Settings.extra_credit_flags := extra_credit;
+    Settings.int_only := int_only
   in
   let preprocessed_name = preprocess src in
   let assembly_name = compile stage preprocessed_name in
@@ -146,6 +147,10 @@ let extra_credit =
     value
     & vflag_all [] [ bitwise; compound; increment; goto; switch; nan; union ])
 
+let int_only =
+  let doc = "Disable Part II features" in
+  Arg.(value & flag & info [ "int-only" ] ~doc)
+
 let debug =
   let doc =
     "Write out pre- and post-register-allocation assembly and DOT files of \
@@ -161,7 +166,14 @@ let cmd =
   let info = Cmd.info "nqcc" ~doc in
   Cmd.v info
     Term.(
-      const driver $ target $ debug $ libs $ extra_credit $ stage $ src_file)
+      const driver
+      $ target
+      $ debug
+      $ libs
+      $ extra_credit
+      $ int_only
+      $ stage
+      $ src_file)
 
 let main () = exit (Cmd.eval cmd)
 let () = main ()
