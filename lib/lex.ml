@@ -26,6 +26,17 @@ let check_extra_credit tok =
       failwith "Unsupported extra-credit feature: union types"
   | _ -> ()
 
+(* Reject part II features when Part I-only option is set (to test the test suite) *)
+let check_part_i tok =
+  if !Settings.int_only then
+    match tok with
+    | StringLiteral _ | ConstChar _ | ConstLong _ | ConstUInt _ | ConstULong _
+    | ConstDouble _ | KWLong | KWChar | KWSigned | KWUnsigned | KWDouble
+    | KWSizeOf | KWStruct | KWUnion | OpenBracket | CloseBracket | Dot | Arrow
+      ->
+        failwith "Part II feature"
+    | _ -> ()
+
 (* regular expressions for tokens *)
 let id_regexp = Str.regexp {|[A-Za-z_][A-Za-z0-9_]*\b|}
 let int_regexp = Str.regexp {|\([0-9]+\)[^A-Za-z0-9_.]|}
@@ -193,4 +204,5 @@ let lex input =
   let input = String.trim input in
   let toks = lex_helper (String.explode input) in
   List.iter check_extra_credit toks;
+  List.iter check_part_i toks;
   toks
