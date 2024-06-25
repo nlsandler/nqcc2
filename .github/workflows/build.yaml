@@ -15,7 +15,7 @@ on:
     inputs:
       chapter:
         required: true
-        type: number
+        type: string
       os:
         type: string
         required: true
