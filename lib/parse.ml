@@ -195,7 +195,9 @@ let parse_type specifier_list =
       in
       let toks = List.map get_tok specifier_list in
       match toks with
-      | [ T.KWVoid ] -> Types.Void
+      | [ T.KWVoid ] ->
+          if !Settings.int_only then failwith "no void types in Part I"
+          else Types.Void
       | [ T.KWDouble ] -> Types.Double
       | [ T.KWChar ] -> Types.Char
       | [ T.KWChar; T.KWSigned ] -> Types.SChar
@@ -314,7 +316,8 @@ and parse_declarator tokens =
   | T.Star ->
       Stream.junk tokens;
       let inner = parse_declarator tokens in
-      PointerDeclarator inner
+      if !Settings.int_only then failwith "No pointers in part i"
+      else PointerDeclarator inner
   | _ -> parse_direct_declarator tokens
 
 (* <direct-declarator> ::= <simple-declarator> [ <declarator-suffix> ]
@@ -430,7 +433,8 @@ let rec parse_abstract_declarator tokens =
         | other ->
             raise_error ~expected:(Name "an abstract declarator") ~actual:other
       in
-      AbstractPointer inner
+      if !Settings.int_only then failwith "no pointers in Part I"
+      else AbstractPointer inner
   | _ -> parse_direct_abstract_declarator tokens
 
 (* <direct-abstract-declarator ::= "(" <abstract-declarator> ")" { "[" <const> "]" }

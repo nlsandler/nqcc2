@@ -22,4 +22,5 @@ type extra_credit =
 
 let platform = ref OS_X (* default to OS X *)
 let extra_credit_flags = ref []
+let int_only = ref false
 let debug = ref false
