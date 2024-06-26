@@ -5,7 +5,10 @@
 Test all combinations of extra credit features and other test options.
 This script's main purpose is to test the test suite itself (e.g. make sure
 we didn't accidentally use Part II features in what's supposed to be a
-Part I-only test)
+Part I-only test).
+We do exhaustive tests of combinations only on Linux; on macOS we run
+all the tests (including extra-credit tests) but don't run tests of
+intermediate stages or different combinations of extra credit features.
 """
 import argparse
 import json
@@ -78,31 +81,42 @@ ALL_EXTRA_CREDIT: tuple = tuple(
 # based on test_properties.json, and record appropriate option
 # strings to enable each of them (including options passed to test_compiler
 # and options passed to the compiler itself
-extra_credit_combos: dict[tuple, dict[str, str]] = {
-    # none (empty set)
-    (): {"test_opts": "", "compiler_opts": ""},
-    # all
-    ALL_EXTRA_CREDIT: {
-        "test_opts": "--extra-credit",
-        "compiler_opts": " ".join("--" + f for f in ALL_EXTRA_CREDIT),
-    },
-}
+extra_credit_combos: dict[tuple, dict[str, str]]
 
-# if the key-value pair "test/case.c": (flag1, flag2, ...)
-# appears in test_properties.json, and test/case.c is in the current
-# chapter or earlier, add (flag1, flag2, ...) to our set of extra credit combos
-with open("./test_properties.json", encoding="utf-8") as f:
-    extra_cred_flags = json.load(f)["extra_credit_tests"]
-    for path, flags in extra_cred_flags.items():
-        # all keys in this dict start with chapter_N/
-        chapter_num = int(path.split("/")[0].removeprefix("chapter_"))
-        if chapter_num <= CHAPTER:
-            k = tuple(sorted(flags, key=get_idx))
-            opt_string = " ".join("--" + flag for flag in k)
-            extra_credit_combos[k] = {
-                "test_opts": opt_string,
-                "compiler_opts": opt_string,
-            }
+if platform.system() == "Darwin":
+    # only run full --extra-credit option
+    extra_credit_combos = {
+        # all
+        ALL_EXTRA_CREDIT: {
+            "test_opts": "--extra-credit",
+            "compiler_opts": " ".join("--" + f for f in ALL_EXTRA_CREDIT),
+        },
+    }
+else:
+    extra_credit_combos = {
+        # none (empty set)
+        (): {"test_opts": "", "compiler_opts": ""},
+        # all
+        ALL_EXTRA_CREDIT: {
+            "test_opts": "--extra-credit",
+            "compiler_opts": " ".join("--" + f for f in ALL_EXTRA_CREDIT),
+        },
+    }
+    # if the key-value pair "test/case.c": (flag1, flag2, ...)
+    # appears in test_properties.json, and test/case.c is in the current
+    # chapter or earlier, add (flag1, flag2, ...) to our set of extra credit combos
+    with open("./test_properties.json", encoding="utf-8") as f:
+        extra_cred_flags = json.load(f)["extra_credit_tests"]
+        for path, flags in extra_cred_flags.items():
+            # all keys in this dict start with chapter_N/
+            chapter_num = int(path.split("/")[0].removeprefix("chapter_"))
+            if chapter_num <= CHAPTER:
+                k = tuple(sorted(flags, key=get_idx))
+                opt_string = " ".join("--" + flag for flag in k)
+                extra_credit_combos[k] = {
+                    "test_opts": opt_string,
+                    "compiler_opts": opt_string,
+                }
 
 
 # test functions
@@ -131,7 +145,10 @@ def test_normal() -> None:
     """Main test method for if we're testing a chapter from part I or II"""
     # define the stages we're going to test
     stages: list[str] = ["lex", "parse", "tacky", "validate", "codegen", "run"]
-    if CHAPTER == 1:
+    if platform.system() == "Darwin":
+        # don't test intermediate stages
+        stages = ["run"]
+    elif CHAPTER == 1:
         # tacky and validate stages not added yet
         stages.remove("tacky")
         stages.remove("validate")
