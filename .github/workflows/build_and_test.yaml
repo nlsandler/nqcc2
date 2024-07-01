@@ -13,6 +13,10 @@ on:
         type: string
         required: false
         default: main
+      tests-branch:
+        type: string
+        required: false
+        default: main
 
 jobs:
   build:
@@ -33,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nlsandler/writing-a-c-compiler-tests
-          ref: complete-test-suite # TODO use main once this is merged
+          ref:  ${{ inputs.tests-branch }}
 
       - name: Check out test runner script
         uses: actions/checkout@v4
