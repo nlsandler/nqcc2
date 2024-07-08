@@ -2,6 +2,17 @@ name: Build and test each chapter
 
 on:
   workflow_dispatch:
+    inputs:
+      tests-branch:
+        type: string
+        required: false
+        default: main
+
+  workflow_call:
+    inputs:
+      tests-branch:
+        type: string
+        required: true
 
 jobs:
 
@@ -16,4 +27,5 @@ jobs:
     with:
       chapter: ${{ matrix.chapter }}
       os: ${{ matrix.os }}
-      branch: ${{ github.ref_name }}
+      branch: ${{ github.action_ref }}
+      tests-branch: ${{ inputs.tests-branch }}
