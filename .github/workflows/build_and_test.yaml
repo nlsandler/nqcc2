@@ -43,6 +43,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nlsandler/nqcc2
+          ref: ${{ inputs.branch }}
           sparse-checkout: |
             .github/run_tests.py
           sparse-checkout-cone-mode: false
