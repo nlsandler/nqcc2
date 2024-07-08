@@ -8,9 +8,16 @@ on:
         required: false
         default: main
 
+
   workflow_call:
     inputs:
       tests-branch:
+        type: string
+        required: true
+      # should always be the name of the branch
+      # that holds this version of the workflow file;
+      # pass as input b/c we can't easily get it directly
+      cc-branch:
         type: string
         required: true
 
@@ -27,5 +34,9 @@ jobs:
     with:
       chapter: ${{ matrix.chapter }}
       os: ${{ matrix.os }}
-      branch: ${{ github.action_ref }}
+      # use inputs.cc-branch if this is a workflow call from other repo,
+      # and ref-name if this is a workflow dispatch; annoyingly
+      # there's no easy way to just get the short ref name
+      # for the current workflow
+      branch: ${{ inputs.cc-branch || github.ref_name }}
       tests-branch: ${{ inputs.tests-branch }}
