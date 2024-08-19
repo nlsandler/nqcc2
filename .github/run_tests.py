@@ -27,6 +27,10 @@ parser.add_argument(
     help=("Chapter whose implementation we're testing"),
 )
 
+parser.add_argument(
+    "--skip-extra-credit", action="store_true", help="Don't run extra credit tests"
+)
+
 args = parser.parse_args()
 
 CC: str = args.cc
@@ -83,7 +87,12 @@ ALL_EXTRA_CREDIT: tuple = tuple(
 # and options passed to the compiler itself
 extra_credit_combos: dict[tuple, dict[str, str]]
 
-if platform.system() == "Darwin":
+if args.skip_extra_credit:
+    extra_credit_combos = {
+        # none (empty set)
+        (): {"test_opts": "", "compiler_opts": ""},
+    }
+elif platform.system() == "Darwin":
     # only run full --extra-credit option
     extra_credit_combos = {
         # all

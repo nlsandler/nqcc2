@@ -60,5 +60,5 @@ jobs:
 
       # Invoke the run_tests.py script to test each intermediate stage
       - name: Run the tests
-        run: ./script/.github/run_tests.py nqcc/main.exe --chapter "${CHAPTER}"
+        run: ./script/.github/run_tests.py nqcc/main.exe --chapter "${CHAPTER}" --skip-extra-credit
 

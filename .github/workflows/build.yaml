@@ -50,7 +50,7 @@ jobs:
       # us to the first (i.e. later i.e. extra credit) commit hash
       - name: Get commit hash
         run: |
-          git log --grep "chapter $CHAPTER" -i --format='%H' -n 1
+          git log --grep "chapter $CHAPTER\b" -i --format='%H' -n 1
           commit=$(git log --grep "chapter $CHAPTER" -i --format='%H' -n 1)
           echo "commit=$commit" >> $GITHUB_ENV
 
