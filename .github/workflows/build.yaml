@@ -51,7 +51,7 @@ jobs:
       - name: Get commit hash
         run: |
           git log --grep "chapter $CHAPTER\b" -i --format='%H' -n 1
-          commit=$(git log --grep "chapter $CHAPTER" -i --format='%H' -n 1)
+          commit=$(git log --grep "chapter $CHAPTER\b" -i --format='%H' -n 1)
           echo "commit=$commit" >> $GITHUB_ENV
 
       - name: Check out NQCC at chapter ${{ inputs.chapter }}
